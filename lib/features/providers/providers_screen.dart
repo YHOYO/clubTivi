@@ -23,6 +23,7 @@ class ProvidersScreen extends ConsumerWidget {
       bindings: {
         const SingleActivator(LogicalKeyboardKey.escape): () {
           Future.microtask(() {
+            if (!context.mounted) return;
             if (context.canPop()) {
               context.pop();
             } else {

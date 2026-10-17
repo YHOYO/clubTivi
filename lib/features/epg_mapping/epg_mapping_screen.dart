@@ -35,6 +35,7 @@ class _EpgMappingScreenState extends ConsumerState<EpgMappingScreen> {
             return;
           }
           Future.microtask(() {
+            if (!context.mounted) return;
             context.go('/settings');
           });
         },

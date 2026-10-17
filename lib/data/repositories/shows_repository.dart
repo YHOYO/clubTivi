@@ -193,7 +193,8 @@ class ShowsRepository {
         try {
           final show = await _trakt.getShow(traktId);
           if (show.tmdbId != null) {
-            return _enrichEpisodesWithTmdb(episodes, show.tmdbId!, seasonNumber);
+            return await _enrichEpisodesWithTmdb(
+                episodes, show.tmdbId!, seasonNumber);
           }
         } catch (_) {}
       }

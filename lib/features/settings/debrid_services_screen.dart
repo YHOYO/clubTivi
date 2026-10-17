@@ -32,7 +32,7 @@ class _DebridServicesScreenState extends ConsumerState<DebridServicesScreen> {
       bindings: {
         const SingleActivator(LogicalKeyboardKey.escape): () {
           Future.microtask(() {
-            if (mounted) Navigator.pop(context);
+            if (context.mounted) Navigator.pop(context);
           });
         },
       },
