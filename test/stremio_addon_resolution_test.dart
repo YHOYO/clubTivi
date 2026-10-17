@@ -7,8 +7,8 @@ import 'package:clubtivi/data/models/language_preferences.dart';
 import 'package:clubtivi/data/models/stremio_addon.dart';
 import 'package:clubtivi/data/models/stream_source.dart';
 import 'package:clubtivi/data/repositories/shows_repository.dart';
-import 'package:clubtivi/data/services/debrid_settings.dart';
 import 'package:clubtivi/data/services/language_preferences_store.dart';
+import 'package:clubtivi/data/services/p2p/p2p_platform.dart';
 import 'package:clubtivi/data/services/stremio_addon_settings.dart';
 import 'package:clubtivi/features/shows/shows_providers.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -90,11 +90,13 @@ void main() {
     List<InstalledAddon> addons = const [],
     _FakeStremioClient? client,
     List<StreamSource> torrentio = const [],
+    bool p2pSupported = true,
   }) {
     return ShowsRepository(
       torrentSearch: _FakeSearch(torrentio),
       stremioAddons: addons,
       stremioClient: client ?? _FakeStremioClient(),
+      p2pSupported: p2pSupported,
     );
   }
 
@@ -160,10 +162,21 @@ void main() {
     expect(result.failures, isEmpty);
     expect(client.calls, isEmpty);
     expect(
-      result.sources.single.unavailableReason,
-      kDebridRequiredReason,
-      reason: 'sin debrid ni addons el torrent sigue marcado como no disponible',
+      result.sources.single.isAvailable,
+      isTrue,
+      reason: 'sin debrid el motor P2P reproduce el torrent',
     );
+    expect(result.sources.single.unavailableReason, isNull);
+  });
+
+  test('en una plataforma sin motor P2P el motivo del torrent vuelve', () async {
+    final result = await repository(
+      torrentio: [_source('tt-1', 'torrent', const {})],
+      p2pSupported: false,
+    ).resolveStreams(imdbId: 'tt1234567');
+
+    expect(result.sources.single.isAvailable, isFalse);
+    expect(result.sources.single.unavailableReason, kP2pUnavailableReason);
   });
 
   test('los addons deshabilitados no llegan al repositorio', () async {

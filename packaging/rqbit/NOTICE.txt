@@ -1,0 +1,9 @@
+rqbit (https://github.com/ikatson/rqbit)
+Copyright 2021 Igor Katson
+
+This product includes software developed as part of rqbit, licensed under
+the Apache License, Version 2.0 (see rqbit-LICENSE.txt next to the app).
+
+The app downloads the official rqbit.exe for Windows x64 from
+https://github.com/ikatson/rqbit/releases/tag/v9.0.1 and verifies its SHA-256
+before running it. See docs/P2P_PLAYBACK.md in the repository.
