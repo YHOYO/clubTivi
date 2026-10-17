@@ -12,6 +12,7 @@
       4. Prepara dist/clubTivi/ con el ejecutable, sus DLL, la carpeta data
          y un LEEME.txt con la version y la fecha de esta build.
       5. Genera dist/clubTivi-windows-x64-<version>.zip y SHA256SUMS.txt.
+      6. Borra los zips de versiones anteriores: en dist/ solo queda la ultima.
 
     Solo escribe dentro de dist/ (y en build/, que es de Flutter).
 
@@ -193,6 +194,25 @@ $zipPath = Join-Path $OutputDir $zipName
 if (Test-Path $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
 Write-Step "Comprimiendo $zipName"
 Compress-Archive -Path $stage -DestinationPath $zipPath -CompressionLevel Optimal -Force
+
+# --- Limpieza de paquetes anteriores ---------------------------------------
+# dist/ es la carpeta de la ultima version: dejar zips viejos al lado del nuevo
+# invita a publicar o probar el equivocado. Se borran despues de crear el zip
+# actual, para no quedarse sin paquete si la compresion falla.
+Write-Step 'Eliminando paquetes de versiones anteriores'
+$oldZips = @(
+    Get-ChildItem -LiteralPath $OutputDir -Filter 'clubTivi-windows-x64-*.zip' -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ne $zipName }
+)
+if ($oldZips.Count -eq 0) {
+    Write-Note 'no habia zips anteriores'
+}
+else {
+    foreach ($oldZip in $oldZips) {
+        Remove-Item -LiteralPath $oldZip.FullName -Force
+        Write-Note "borrado $($oldZip.Name)"
+    }
+}
 
 # --- SHA-256 ---------------------------------------------------------------
 # Se calcula sobre el zip ya cerrado, en formato `sha256sum -c` (hash, dos

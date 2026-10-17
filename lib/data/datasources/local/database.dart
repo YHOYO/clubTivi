@@ -70,7 +70,18 @@ class AppDatabase extends _$AppDatabase {
             await m.createTable(failoverGroupChannels);
           }
           if (from < 6) {
-            await m.addColumn(channels, channels.httpHeaders);
+            // Una base migrada a medias puede tener ya la columna y seguir en
+            // la version 5: ALTER TABLE ... ADD COLUMN falla con "duplicate
+            // column name" y el arranque se queda en «Loading providers…».
+            // Solo se añade si de verdad falta.
+            final columns =
+                await customSelect('PRAGMA table_info(channels)').get();
+            final hasHttpHeaders = columns.any(
+              (row) => row.read<String>('name') == 'http_headers',
+            );
+            if (!hasHttpHeaders) {
+              await m.addColumn(channels, channels.httpHeaders);
+            }
           }
         },
       );
