@@ -22,15 +22,27 @@ class _FakeClient extends StremioAddonClient {
   _FakeClient({this.error});
 
   final StremioAddonException? error;
+  StremioManifest manifest = _manifest;
   final List<String> requested = [];
 
   @override
   Future<StremioManifest> fetchManifest(String addonUrl) async {
     requested.add(addonUrl);
     if (error != null) throw error!;
-    return _manifest;
+    return manifest;
   }
 }
+
+const _catalogManifest = StremioManifest(
+  id: 'com.stremio.torrentio.addon',
+  name: 'Torrentio',
+  version: '0.0.16',
+  types: ['movie', 'series'],
+  resources: ['stream', 'catalog'],
+  catalogs: [
+    StremioCatalog(type: 'movie', id: 'torrentio-top', name: 'Top'),
+  ],
+);
 
 void main() {
   setUp(() {
@@ -38,6 +50,9 @@ void main() {
   });
 
   Future<void> pump(WidgetTester tester, _FakeClient client) async {
+    tester.view.physicalSize = const Size(1200, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
     await tester.pumpWidget(
       ProviderScope(
         overrides: [stremioAddonClientProvider.overrideWithValue(client)],
@@ -110,6 +125,48 @@ void main() {
       reason: 'un addon deshabilitado no se consulta',
     );
     expect(container.read(stremioAddonSettingsProvider).count, 1);
+  });
+
+  testWidgets('los recomendados se instalan con un clic', (tester) async {
+    final client = _FakeClient();
+    await pump(tester, client);
+
+    expect(find.text('AnimES (AnimeFLV)'), findsOneWidget);
+    expect(find.text('Anime Kitsu'), findsOneWidget);
+
+    await tester.tap(find.text('Install').first);
+    await tester.pumpAndSettle();
+
+    expect(client.requested, ['https://pigamer37.alwaysdata.net']);
+    final store = await SharedPreferences.getInstance();
+    expect(
+      store.getString('shows_stremio_addons'),
+      contains('pigamer37.alwaysdata.net'),
+    );
+  });
+
+  testWidgets('actualizar el manifest trae catálogos nuevos', (tester) async {
+    final client = _FakeClient();
+    await pump(tester, client);
+
+    await tester.enterText(find.byType(TextField), 'torrentio.strem.fun');
+    await tester.tap(find.text('Install addon'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('catalogs'), findsNothing);
+
+    client.manifest = _catalogManifest;
+    await tester.tap(find.byIcon(Icons.refresh));
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 catalogs'), findsOneWidget);
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(StremioAddonsScreen)),
+    );
+    expect(
+      container.read(stremioAddonSettingsProvider).addons.single.catalogs,
+      hasLength(1),
+      reason: 'configurar un addon en la web exige releer su manifest',
+    );
   });
 
   testWidgets('quitar un addon pide confirmación antes de borrarlo',

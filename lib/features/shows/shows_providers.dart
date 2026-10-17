@@ -31,6 +31,16 @@ final enabledStremioAddonsProvider = Provider<List<InstalledAddon>>(
   (ref) => ref.watch(stremioAddonSettingsProvider).enabledAddons,
 );
 
+/// Addons a los que sí se les pide streams. Un addon de sólo catálogo (Kitsu)
+/// se instala para descubrir, pero no se consulta al reproducir.
+final enabledStreamAddonsProvider = Provider<List<InstalledAddon>>(
+  (ref) => ref
+      .watch(stremioAddonSettingsProvider)
+      .enabledAddons
+      .where((addon) => addon.supportsStreams)
+      .toList(growable: false),
+);
+
 /// Provider for the shows repository (rebuilds when keys, debrid settings or
 /// addons change). Los servicios debrid se construyen en el orden de prioridad
 /// que fija [debridSettingsProvider] y los addons en el que fija
@@ -39,7 +49,7 @@ final enabledStremioAddonsProvider = Provider<List<InstalledAddon>>(
 final showsRepositoryProvider = FutureProvider<ShowsRepository>((ref) async {
   final keys = ref.watch(showsApiKeysProvider);
   final debridSettings = ref.watch(debridSettingsProvider);
-  final addons = ref.watch(enabledStremioAddonsProvider);
+  final addons = ref.watch(enabledStreamAddonsProvider);
   final stremioClient = ref.watch(stremioAddonClientProvider);
 
   return ShowsRepository(
@@ -171,6 +181,257 @@ class StreamResolveParams {
 
   @override
   int get hashCode => imdbId.hashCode ^ (season ?? 0).hashCode ^ (episode ?? 0).hashCode;
+}
+
+/// Un catálogo que se va a pintar en el descubrimiento.
+class AddonCatalogSpec {
+  final InstalledAddon addon;
+  final StremioCatalog catalog;
+
+  const AddonCatalogSpec({required this.addon, required this.catalog});
+
+  String get title {
+    final name = catalog.name?.trim();
+    return name == null || name.isEmpty ? catalog.id : name;
+  }
+
+  /// Género con el que abre la fila: el primero si es obligatorio.
+  String? get defaultGenre {
+    final extra = catalog.genreExtra;
+    if (extra == null || !extra.isRequired || extra.options.isEmpty) {
+      return null;
+    }
+    return extra.options.first;
+  }
+
+  @override
+  String toString() => 'AddonCatalogSpec(${addon.name}/$title)';
+}
+
+/// Una fila de descubrimiento: un catálogo de un addon con su primera página.
+///
+/// Un catálogo que falla no tumba la sección: la fila conserva el motivo para
+/// que la pantalla lo explique y el resto sigue pintándose.
+class AddonCatalogRow {
+  final InstalledAddon addon;
+  final StremioCatalog catalog;
+  final List<StremioMeta> metas;
+  final String? error;
+
+  const AddonCatalogRow({
+    required this.addon,
+    required this.catalog,
+    this.metas = const [],
+    this.error,
+  });
+
+  String get title {
+    final name = catalog.name?.trim();
+    return name == null || name.isEmpty ? catalog.id : name;
+  }
+
+  bool get hasError => error != null;
+  bool get isEmpty => metas.isEmpty && error == null;
+
+  @override
+  String toString() => 'AddonCatalogRow(${addon.name}/$title, ${metas.length})';
+}
+
+/// Catálogos que se pintan en el descubrimiento, en el orden de los addons.
+///
+/// Los catálogos que sólo responden a `search` o que exigen un extra que no
+/// sabemos rellenar se omiten; como mucho se pintan 12 filas.
+final stremioCatalogSpecsProvider = Provider<List<AddonCatalogSpec>>((ref) {
+  final addons = ref
+      .watch(enabledStremioAddonsProvider)
+      .where((addon) => addon.hasCatalogs)
+      .toList(growable: false);
+  const maxRows = 12;
+  const maxPerAddon = 4;
+
+  final specs = <AddonCatalogSpec>[];
+  for (final addon in addons) {
+    for (final catalog in addon.browsableCatalogs.take(maxPerAddon)) {
+      if (specs.length >= maxRows) break;
+      specs.add(AddonCatalogSpec(addon: addon, catalog: catalog));
+    }
+  }
+  return specs;
+});
+
+/// Primera página de una fila. El género viaja en los parámetros para que la
+/// propia fila pueda cambiarlo sin recargar las demás.
+final addonCatalogRowProvider = FutureProvider.family<AddonCatalogRow,
+    AddonCatalogParams>((ref, params) async {
+  final addon = ref
+      .watch(stremioAddonSettingsProvider)
+      .byUrl(params.addonUrl);
+  if (addon == null) {
+    throw const StremioAddonException(
+      'Ese addon ya no está instalado. Vuelve a instalarlo para ver su catálogo.',
+    );
+  }
+  StremioCatalog? catalog;
+  for (final candidate in addon.catalogs) {
+    if (candidate.type == params.catalogType && candidate.id == params.catalogId) {
+      catalog = candidate;
+      break;
+    }
+  }
+  if (catalog == null) {
+    throw const StremioAddonException(
+      'El addon ya no publica ese catálogo. Actualízalo desde Stremio Addons.',
+    );
+  }
+  return _loadRow(
+    ref.watch(stremioAddonClientProvider),
+    addon,
+    catalog,
+    params.genre,
+  );
+});
+
+class AddonCatalogParams {
+  final String addonUrl;
+  final String catalogType;
+  final String catalogId;
+  final String? genre;
+
+  const AddonCatalogParams({
+    required this.addonUrl,
+    required this.catalogType,
+    required this.catalogId,
+    this.genre,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AddonCatalogParams &&
+          addonUrl == other.addonUrl &&
+          catalogType == other.catalogType &&
+          catalogId == other.catalogId &&
+          genre == other.genre;
+
+  @override
+  int get hashCode => Object.hash(addonUrl, catalogType, catalogId, genre);
+}
+
+Future<AddonCatalogRow> _loadRow(
+  StremioAddonClient client,
+  InstalledAddon addon,
+  StremioCatalog catalog,
+  String? genre,
+) async {
+  try {
+    final metas = await client.fetchCatalog(
+      addon: addon,
+      catalog: catalog,
+      genre: genre,
+    );
+    return AddonCatalogRow(addon: addon, catalog: catalog, metas: metas);
+  } on StremioAddonException catch (e) {
+    return AddonCatalogRow(addon: addon, catalog: catalog, error: e.message);
+  } catch (_) {
+    return AddonCatalogRow(
+      addon: addon,
+      catalog: catalog,
+      error: 'El addon no pudo responder',
+    );
+  }
+}
+
+/// Ficha completa desde el addon del catálogo. Null = el addon no publica
+/// `meta`; la pantalla mantiene entonces los datos del catálogo.
+final stremioMetaProvider =
+    FutureProvider.family<StremioMeta?, StremioMetaParams>((ref, params) async {
+  final addon = ref
+      .watch(stremioAddonSettingsProvider)
+      .byUrl(params.addonUrl);
+  if (addon == null) {
+    throw const StremioAddonException(
+      'Ese addon ya no está instalado. Vuelve a instalarlo para abrir su ficha.',
+    );
+  }
+  return ref.watch(stremioAddonClientProvider).fetchMeta(
+        addon: addon,
+        type: params.type,
+        id: params.id,
+      );
+});
+
+class StremioMetaParams {
+  final String addonUrl;
+  final String type;
+  final String id;
+
+  const StremioMetaParams({
+    required this.addonUrl,
+    required this.type,
+    required this.id,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is StremioMetaParams &&
+          addonUrl == other.addonUrl &&
+          type == other.type &&
+          id == other.id;
+
+  @override
+  int get hashCode => Object.hash(addonUrl, type, id);
+}
+
+/// Fuentes de un título de catálogo, consultadas a los addons con su id propio
+/// (`kitsu:7442:1`) y a Torrentio cuando la ficha trae un id IMDB.
+final addonStreamsProvider =
+    FutureProvider.family<StreamSearchResult, AddonStreamParams>(
+        (ref, params) async {
+  final preferences = ref.watch(languagePreferencesProvider);
+  final repo = await ref.watch(showsRepositoryProvider.future);
+  final result = await repo.resolveStreams(
+    imdbId: params.imdbId,
+    season: params.season,
+    episode: params.episode,
+    addonType: params.addonType,
+    addonId: params.addonId,
+  );
+  return result.copyWith(
+    sources: rankStreams(result.sources, preferences)
+        .take(10)
+        .toList(growable: false),
+  );
+});
+
+class AddonStreamParams {
+  final String addonType;
+  final String addonId;
+  final String imdbId;
+  final int? season;
+  final int? episode;
+
+  const AddonStreamParams({
+    required this.addonType,
+    required this.addonId,
+    required this.imdbId,
+    this.season,
+    this.episode,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AddonStreamParams &&
+          addonType == other.addonType &&
+          addonId == other.addonId &&
+          imdbId == other.imdbId &&
+          season == other.season &&
+          episode == other.episode;
+
+  @override
+  int get hashCode =>
+      Object.hash(addonType, addonId, imdbId, season, episode);
 }
 
 /// API keys configuration state

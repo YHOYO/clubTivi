@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:go_router/go_router.dart';
 import '../../data/models/show.dart';
+import '../../data/models/stremio_addon.dart';
 import 'shows_providers.dart';
 
 /// Main shows screen with poster grid organized by category
@@ -24,6 +25,7 @@ class _ShowsScreenState extends ConsumerState<ShowsScreen> {
 
   static const _categories = [
     'Favorites',
+    'From addons',
     'Trending Shows',
     'Popular Shows',
     'Trending Movies',
@@ -41,8 +43,13 @@ class _ShowsScreenState extends ConsumerState<ShowsScreen> {
   @override
   Widget build(BuildContext context) {
     final apiKeys = ref.watch(showsApiKeysProvider);
+    // Un addon con catálogos ya da contenido: no hace falta Trakt ni TMDB
+    // para entrar a descubrirlo.
+    final hasAddonCatalogs = ref
+        .watch(enabledStremioAddonsProvider)
+        .any((addon) => addon.hasCatalogs);
 
-    if (!apiKeys.hasTraktKey && !apiKeys.hasTmdbKey) {
+    if (!apiKeys.hasTraktKey && !apiKeys.hasTmdbKey && !hasAddonCatalogs) {
       return _buildSetupPrompt(context);
     }
 
@@ -100,7 +107,9 @@ class _ShowsScreenState extends ConsumerState<ShowsScreen> {
               ),
               const SizedBox(height: 12),
               const Text(
-                'Configure at least a Trakt or TMDB API key in Settings\nto browse trending shows and movies.',
+                'Add a Trakt or TMDB API key in Settings to browse trending '
+                'shows and movies, or install a Stremio addon with catalogs '
+                '(anime, Spanish movies…).',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.white60, fontSize: 16),
               ),
@@ -115,6 +124,13 @@ class _ShowsScreenState extends ConsumerState<ShowsScreen> {
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
                 ),
+              ),
+              const SizedBox(height: 12),
+              TextButton.icon(
+                onPressed: () => context.go('/stremio-addons'),
+                icon: const Icon(Icons.extension_rounded),
+                label: const Text('Install Stremio addons'),
+                style: TextButton.styleFrom(foregroundColor: Colors.white70),
               ),
             ],
           ),
@@ -231,12 +247,14 @@ class _ShowsScreenState extends ConsumerState<ShowsScreen> {
       case 0:
         return _buildFavorites();
       case 1:
-        return _buildShowGrid(ref.watch(trendingShowsProvider));
+        return _buildAddonCatalogs();
       case 2:
-        return _buildShowGrid(ref.watch(popularShowsProvider));
+        return _buildShowGrid(ref.watch(trendingShowsProvider));
       case 3:
-        return _buildShowGrid(ref.watch(trendingMoviesProvider));
+        return _buildShowGrid(ref.watch(popularShowsProvider));
       case 4:
+        return _buildShowGrid(ref.watch(trendingMoviesProvider));
+      case 5:
         return _buildShowGrid(ref.watch(popularMoviesProvider));
       default:
         return const SizedBox.shrink();
@@ -266,6 +284,45 @@ class _ShowsScreenState extends ConsumerState<ShowsScreen> {
       );
     }
     return _buildShowGrid(AsyncValue.data(favorites));
+  }
+
+  /// Filas de los catálogos de los addons instalados: la vía para ver el
+  /// contenido de AnimeFLV, Kitsu y compañía sin salir de la app.
+  Widget _buildAddonCatalogs() {
+    final hasAddons = ref
+        .watch(enabledStremioAddonsProvider)
+        .any((addon) => addon.hasCatalogs);
+    if (!hasAddons) {
+      return _AddonEmptyState(
+        onInstall: () => context.push('/stremio-addons'),
+      );
+    }
+
+    final specs = ref.watch(stremioCatalogSpecsProvider);
+    if (specs.isEmpty) {
+      return const Center(
+        child: Text(
+          'The installed addons did not return any titles',
+          style: TextStyle(color: Colors.white38, fontSize: 15),
+        ),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      itemCount: specs.length,
+      itemBuilder: (context, index) => _CatalogRail(
+        key: ValueKey('${specs[index].addon.url}/${specs[index].catalog.id}'),
+        spec: specs[index],
+        onOpen: (meta) => _openMeta(specs[index], meta),
+      ),
+    );
+  }
+
+  void _openMeta(AddonCatalogSpec spec, StremioMeta meta) {
+    context.push(
+      '/stremio-meta',
+      extra: {'meta': meta, 'addonUrl': spec.addon.url},
+    );
   }
 
   Widget _buildSearchResults() {
@@ -485,6 +542,356 @@ class _ShowPosterCard extends ConsumerWidget {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(color: Colors.white38, fontSize: 10),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Sin addons con catálogos, la pestaña explica cómo llegar a ellos en vez de
+/// quedarse vacía.
+class _AddonEmptyState extends StatelessWidget {
+  final VoidCallback onInstall;
+
+  const _AddonEmptyState({required this.onInstall});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.extension_rounded,
+              size: 48,
+              color: Colors.white24,
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'No addon catalogs yet',
+              style: TextStyle(color: Colors.white54, fontSize: 16),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Install an addon with catalogs (AnimeFLV, Kitsu…) to browse '
+              'its content here.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white38, fontSize: 13, height: 1.4),
+            ),
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: onInstall,
+              icon: const Icon(Icons.add_link_rounded),
+              label: const Text('Install addons'),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF6C5CE7),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Una fila horizontal de un catálogo de addon. Un catálogo caído se explica
+/// en su propia fila y no impide ver las demás. Cuando el addon declara
+/// géneros, la propia fila deja cambiarlos sin recargar el resto.
+class _CatalogRail extends ConsumerStatefulWidget {
+  final AddonCatalogSpec spec;
+  final void Function(StremioMeta meta) onOpen;
+
+  const _CatalogRail({
+    super.key,
+    required this.spec,
+    required this.onOpen,
+  });
+
+  @override
+  ConsumerState<_CatalogRail> createState() => _CatalogRailState();
+}
+
+class _CatalogRailState extends ConsumerState<_CatalogRail> {
+  String? _genre;
+
+  @override
+  void initState() {
+    super.initState();
+    _genre = widget.spec.defaultGenre;
+  }
+
+  @override
+  void didUpdateWidget(covariant _CatalogRail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.spec.addon.url != widget.spec.addon.url ||
+        oldWidget.spec.catalog.id != widget.spec.catalog.id) {
+      _genre = widget.spec.defaultGenre;
+    }
+  }
+
+  AddonCatalogParams get _params => AddonCatalogParams(
+        addonUrl: widget.spec.addon.url,
+        catalogType: widget.spec.catalog.type,
+        catalogId: widget.spec.catalog.id,
+        genre: _genre,
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final spec = widget.spec;
+    final rowAsync = ref.watch(addonCatalogRowProvider(_params));
+    final options = spec.catalog.genreExtra?.options ?? const <String>[];
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 12, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    spec.title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (options.isNotEmpty) _buildGenreMenu(options),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    spec.addon.name,
+                    style: const TextStyle(
+                      color: Colors.white38,
+                      fontSize: 12,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          rowAsync.when(
+            loading: () => const SizedBox(
+              height: 246,
+              child: Center(
+                child: CircularProgressIndicator(
+                  color: Color(0xFF6C5CE7),
+                  strokeWidth: 2,
+                ),
+              ),
+            ),
+            error: (error, _) => _buildRowError('$error'),
+            data: (row) {
+              if (row.hasError) return _buildRowError(row.error!);
+              if (row.metas.isEmpty) {
+                return const Padding(
+                  padding: EdgeInsets.fromLTRB(20, 4, 20, 8),
+                  child: Text(
+                    'This catalog did not return any titles',
+                    style: TextStyle(color: Colors.white38, fontSize: 13),
+                  ),
+                );
+              }
+              return SizedBox(
+                height: 246,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  itemCount: row.metas.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 12),
+                  itemBuilder: (context, index) => _CatalogPosterCard(
+                    meta: row.metas[index],
+                    onTap: () => widget.onOpen(row.metas[index]),
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGenreMenu(List<String> options) {
+    return PopupMenuButton<String>(
+      tooltip: 'Genre',
+      initialValue: _genre,
+      onSelected: (value) => setState(() => _genre = value),
+      itemBuilder: (_) => [
+        for (final option in options)
+          PopupMenuItem<String>(value: option, child: Text(option)),
+      ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A1A2E),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _genre ?? 'Genre',
+              style: const TextStyle(color: Colors.white60, fontSize: 12),
+            ),
+            const Icon(
+              Icons.arrow_drop_down,
+              color: Colors.white38,
+              size: 18,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRowError(String message) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20),
+      padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+      decoration: BoxDecoration(
+        color: Colors.redAccent.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.redAccent.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.cloud_off_rounded,
+            color: Colors.redAccent,
+            size: 18,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+            ),
+          ),
+          TextButton(
+            onPressed: () => ref.invalidate(addonCatalogRowProvider(_params)),
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CatalogPosterCard extends StatelessWidget {
+  final StremioMeta meta;
+  final VoidCallback onTap;
+
+  const _CatalogPosterCard({required this.meta, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent &&
+            (event.logicalKey == LogicalKeyboardKey.select ||
+                event.logicalKey == LogicalKeyboardKey.enter ||
+                event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
+          onTap();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Builder(
+        builder: (context) {
+          final hasFocus = Focus.of(context).hasFocus;
+          return InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              width: 132,
+              decoration: hasFocus
+                  ? BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: const Color(0xFF6C5CE7),
+                        width: 2,
+                      ),
+                    )
+                  : null,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: SizedBox(
+                      width: 132,
+                      height: 194,
+                      child: meta.poster != null && meta.poster!.isNotEmpty
+                          ? CachedNetworkImage(
+                              imageUrl: meta.poster!,
+                              fit: BoxFit.cover,
+                              placeholder: (_, _) =>
+                                  Container(color: const Color(0xFF1A1A2E)),
+                              errorWidget: (_, _, _) => _placeholder(),
+                            )
+                          : _placeholder(),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    meta.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  if (meta.year != null)
+                    Text(
+                      '${meta.year}',
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _placeholder() {
+    return Container(
+      color: const Color(0xFF1A1A2E),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.movie, color: Colors.white24, size: 36),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: Text(
+                meta.name,
+                textAlign: TextAlign.center,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white38, fontSize: 10),
+              ),
             ),
           ],
         ),

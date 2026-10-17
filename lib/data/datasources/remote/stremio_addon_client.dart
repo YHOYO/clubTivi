@@ -6,8 +6,8 @@ import '../../services/stremio_stream_mapper.dart';
 
 /// Cliente del protocolo de addons de Stremio.
 ///
-/// Solo implementa lo que la app consume: leer y validar `manifest.json` y
-/// pedir `/stream/{type}/{id}.json`. Cualquier fallo se traduce a
+/// Implementa lo que la app consume: validar `manifest.json`, pedir
+/// `/catalog/...`, `/meta/...` y `/stream/...`. Cualquier fallo se traduce a
 /// [StremioAddonException] con un motivo legible, para que un addon caído o
 /// lento quede fuera de la lista con explicación en vez de tumbar la búsqueda.
 class StremioAddonClient {
@@ -44,6 +44,109 @@ class StremioAddonClient {
         url: uri,
       );
     }
+  }
+
+  /// Primera página de un catálogo, ya traducida a [StremioMeta].
+  ///
+  /// [genre] elige una opción de `extra.genre`; [skip] pide la página
+  /// siguiente (0 es la primera). [search] sólo se usa en los catálogos que
+  /// declaran `search` como extra obligatorio.
+  Future<List<StremioMeta>> fetchCatalog({
+    required InstalledAddon addon,
+    required StremioCatalog catalog,
+    String? genre,
+    int skip = 0,
+    String? search,
+  }) async {
+    final extras = <String>[
+      if (search != null && search.trim().isNotEmpty)
+        'search=${Uri.encodeComponent(search.trim())}',
+      if (genre != null && genre.isNotEmpty)
+        'genre=${Uri.encodeComponent(genre)}',
+      if (skip > 0) 'skip=$skip',
+    ];
+    final extraPath = extras.isEmpty ? '' : '/${extras.join('&')}';
+    final uri = Uri.parse(
+      '${addon.url}/catalog/${Uri.encodeComponent(catalog.type)}/'
+      '${Uri.encodeComponent(catalog.id)}$extraPath.json',
+    );
+
+    final Object? data;
+    try {
+      final response = await _dio.getUri<Object?>(uri);
+      data = response.data;
+    } on DioException catch (e) {
+      throw StremioAddonException(_describe(e), url: uri);
+    } catch (e) {
+      throw StremioAddonException(
+        'El addon respondió algo que no se pudo leer',
+        url: uri,
+      );
+    }
+
+    if (data is! Map) {
+      throw StremioAddonException(
+        'El addon devolvió algo que no es JSON de catálogo.',
+        url: uri,
+      );
+    }
+
+    final metas = data['metas'];
+    if (metas == null) return const [];
+    if (metas is! List) {
+      throw StremioAddonException(
+        'El addon devolvió "metas" con una forma inesperada.',
+        url: uri,
+      );
+    }
+
+    final result = <StremioMeta>[];
+    for (final entry in metas) {
+      final meta = StremioMeta.fromJson(entry);
+      if (meta != null) result.add(meta);
+    }
+    return result;
+  }
+
+  /// Ficha completa de un título (con episodios cuando el addon los ofrece).
+  ///
+  /// Devuelve null si el addon no trae `meta`: quien llama puede seguir usando
+  /// los datos que ya tenía del catálogo.
+  Future<StremioMeta?> fetchMeta({
+    required InstalledAddon addon,
+    required String type,
+    required String id,
+  }) async {
+    final uri = Uri.parse('${addon.url}/meta/$type/$id.json');
+    final Object? data;
+    try {
+      final response = await _dio.getUri<Object?>(uri);
+      data = response.data;
+    } on DioException catch (e) {
+      throw StremioAddonException(_describe(e), url: uri);
+    } catch (e) {
+      throw StremioAddonException(
+        'El addon respondió algo que no se pudo leer',
+        url: uri,
+      );
+    }
+
+    if (data is! Map) {
+      throw StremioAddonException(
+        'El addon devolvió algo que no es JSON de ficha.',
+        url: uri,
+      );
+    }
+    final meta = data['meta'];
+    if (meta == null) return null;
+    final parsed = StremioMeta.fromJson(meta);
+    if (parsed == null) {
+      throw StremioAddonException(
+        'El addon devolvió una ficha incompleta.',
+        url: uri,
+      );
+    }
+    return parsed;
   }
 
   /// Streams de un addon concreto, ya traducidos a [StreamSource].

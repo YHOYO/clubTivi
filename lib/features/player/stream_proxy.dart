@@ -23,8 +23,14 @@ class StreamProxy {
   String? get localUrl => _port != null ? 'http://127.0.0.1:$_port/' : null;
 
   /// Start proxying a remote stream URL.
+  ///
+  /// [headers] are forwarded to ffmpeg's HTTP input so playlists that require a
+  /// referrer or user agent (#EXTVLCOPT) don't come back 403 from the proxy.
   /// Returns the local URL that mpv should play from.
-  Future<String?> start(String remoteUrl) async {
+  Future<String?> start(
+    String remoteUrl, {
+    Map<String, String> headers = const {},
+  }) async {
     // Stop any existing proxy
     await stop();
 
@@ -48,6 +54,11 @@ class StreamProxy {
         '-reconnect', '1',
         '-reconnect_streamed', '1',
         '-reconnect_delay_max', '5',
+        if (headers.isNotEmpty) ...[
+          // ffmpeg wants CRLF-separated fields on a single -headers value.
+          '-headers',
+          headers.entries.map((e) => '${e.key}: ${e.value}').join('\r\n'),
+        ],
         '-i', remoteUrl,
         '-c', 'copy',
         '-f', 'mpegts',
@@ -169,6 +180,8 @@ class StreamProxy {
 
   /// Find ffmpeg binary on the system.
   static Future<String?> _findFfmpeg() async {
+    if (Platform.isWindows) return _findFfmpegOnWindows();
+
     // Check common locations
     const paths = [
       '/opt/homebrew/bin/ffmpeg',  // macOS Apple Silicon
@@ -185,6 +198,40 @@ class StreamProxy {
       final result = await Process.run('which', ['ffmpeg']);
       if (result.exitCode == 0) {
         return (result.stdout as String).trim();
+      }
+    } catch (_) {}
+
+    return null;
+  }
+
+  /// Windows lookup: walk PATH looking for an executable named ffmpeg.
+  ///
+  /// `which` does not exist on Windows (and under MSYS/Git-Bash it returns
+  /// POSIX-style paths Windows cannot spawn), so the binary has to be resolved
+  /// from PATH directly, preferring the `.exe` (and skipping the extensionless
+  /// shims some package managers leave behind).
+  static Future<String?> _findFfmpegOnWindows() async {
+    final pathVariable = Platform.environment['Path'] ??
+        Platform.environment['PATH'] ??
+        '';
+    for (final entry in pathVariable.split(';')) {
+      final dir = entry.trim().replaceAll(RegExp(r'^"|"$'), '');
+      if (dir.isEmpty) continue;
+      for (final name in const ['ffmpeg.exe', 'ffmpeg.bat', 'ffmpeg.cmd']) {
+        final candidate = '$dir\\$name';
+        if (await File(candidate).exists()) return candidate;
+      }
+    }
+
+    // Last resort: `where` is the Windows equivalent of `which`.
+    try {
+      final result = await Process.run('where', ['ffmpeg.exe']);
+      if (result.exitCode == 0) {
+        final first = (result.stdout as String)
+            .split(RegExp(r'\r?\n'))
+            .map((line) => line.trim())
+            .firstWhere((line) => line.isNotEmpty, orElse: () => '');
+        if (first.isNotEmpty) return first;
       }
     } catch (_) {}
 

@@ -50,6 +50,14 @@ The headline feature that sets clubTivi apart. Group the same channel from multi
 - **Vanity names** — rename any channel without affecting the underlying data
 - **Channel history** — backspace to toggle between current and previous channel
 
+### 🧩 Stremio Addons
+- **Install by URL** — the manifest is validated before saving; a broken addon is skipped with its reason
+- **Catalogs inside the app** — browse addon catalogs (anime, Spanish), switch genre per row and open a title with its episodes
+- **One-click recommendations** — AnimES (AnimeFLV), Anime Kitsu and Anime Catalogs, including their `/configure` page
+- **Streams merged** — addon sources join Torrentio and are ranked by your language preferences
+
+See [docs/STREMIO_ADDONS.md](docs/STREMIO_ADDONS.md) for the details and the recommended addons.
+
 ### 🎮 Keyboard & Remote Control
 - **Full keyboard navigation** — arrow keys, Enter for fullscreen, number keys for direct channel entry
 - **Volume control** — left/right arrow keys adjust volume with visual overlay
@@ -160,6 +168,7 @@ lib/
 - [x] Keyboard, gamepad, and remote control navigation
 - [x] Instant startup with phased loading
 - [x] Session persistence
+- [x] Stremio addons: install by URL, catalogs and merged streams
 
 ### 🔜 Coming Next
 - [ ] Warm failover (background stream health monitoring)

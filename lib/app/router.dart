@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/platform_info.dart';
@@ -11,9 +12,11 @@ import '../features/settings/debrid_services_screen.dart';
 import '../features/settings/stremio_addons_screen.dart';
 import '../features/shows/shows_screen.dart';
 import '../features/shows/show_detail_screen.dart';
+import '../features/shows/stremio_meta_screen.dart';
 import '../features/splash/splash_screen.dart';
 import '../platform/tv/tv_shell.dart';
 import '../data/models/show.dart';
+import '../data/models/stremio_addon.dart';
 
 GoRouter createRouter() {
   // Routes that live inside the TV sidebar shell
@@ -82,6 +85,27 @@ GoRouter createRouter() {
         final traktId = int.tryParse(state.pathParameters['id'] ?? '') ?? 0;
         final show = state.extra as Show?;
         return ShowDetailScreen(traktId: traktId, initialShow: show);
+      },
+    ),
+    GoRoute(
+      path: '/stremio-meta',
+      builder: (context, state) {
+        final extra = state.extra;
+        if (extra is Map && extra['meta'] is StremioMeta) {
+          return StremioMetaScreen(
+            initialMeta: extra['meta'] as StremioMeta,
+            addonUrl: extra['addonUrl'] as String? ?? '',
+          );
+        }
+        return const Scaffold(
+          backgroundColor: Color(0xFF0A0A1A),
+          body: Center(
+            child: Text(
+              'Esta ficha ya no está disponible',
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
+        );
       },
     ),
   ];

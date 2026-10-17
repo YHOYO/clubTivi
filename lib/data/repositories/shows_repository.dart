@@ -254,19 +254,29 @@ class ShowsRepository {
   /// o lento solo se reporta como fallo con su motivo: nunca tumba ni bloquea a
   /// los demás. El orden final lo decide `rankStreams` en la capa de providers,
   /// para que este repositorio no dependa de preferencias de UI.
+  /// [addonType]/[addonId] permiten pedir a los addons el id propio de su
+  /// catálogo (`kitsu:7442:1`, `animeav1:…:2`) en vez del id IMDB. Torrentio
+  /// sólo se consulta cuando hay un id `tt` real.
   Future<StreamSearchResult> resolveStreams({
     required String imdbId,
     int? season,
     int? episode,
+    String? addonType,
+    String? addonId,
   }) async {
     final isEpisode = season != null && episode != null;
 
     // Step 1: Torrentio y addons Stremio en paralelo.
-    final torrentFuture = isEpisode
-        ? _torrentSearch.searchEpisode(imdbId, season: season, episode: episode)
-        : _torrentSearch.searchMovie(imdbId);
-    final streamId = isEpisode ? '$imdbId:$season:$episode' : imdbId;
-    final streamType = isEpisode ? 'series' : 'movie';
+    final hasImdbId = imdbId.startsWith('tt');
+    final torrentFuture = !hasImdbId
+        ? Future<List<StreamSource>>.value(const [])
+        : isEpisode
+            ? _torrentSearch.searchEpisode(imdbId,
+                season: season, episode: episode)
+            : _torrentSearch.searchMovie(imdbId);
+    final streamId = addonId ??
+        (isEpisode ? '$imdbId:$season:$episode' : imdbId);
+    final streamType = addonType ?? (isEpisode ? 'series' : 'movie');
 
     final addonFutures = [
       for (final addon in _stremioAddons)

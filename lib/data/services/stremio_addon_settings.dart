@@ -96,6 +96,11 @@ class StremioAddonSettingsNotifier extends StateNotifier<StremioAddonSettings> {
       manifestId: manifest.id,
       version: manifest.version,
       enabled: index >= 0 ? addons[index].enabled : true,
+      catalogs: List<StremioCatalog>.unmodifiable(manifest.catalogs),
+      types: List<String>.unmodifiable(manifest.types),
+      configurable: manifest.configurable,
+      configurationRequired: manifest.configurationRequired,
+      supportsStreams: manifest.supportsStreams,
     );
     if (index >= 0) {
       addons[index] = entry;
@@ -175,7 +180,7 @@ class StremioAddonSettingsNotifier extends StateNotifier<StremioAddonSettings> {
     return prefs.setString(
       stremioAddonsKey,
       jsonEncode({
-        'version': 1,
+        'version': 2,
         'addons': [for (final addon in addons) addon.toJson()],
       }),
     );

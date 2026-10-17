@@ -1,0 +1,34 @@
+{
+  "id": "community.anime.kitsu",
+  "version": "0.0.10",
+  "name": "Anime Kitsu",
+  "description": "Kitsu catalogs and metadata",
+  "types": ["anime", "movie", "series"],
+  "resources": ["catalog", "meta", "subtitles"],
+  "catalogs": [
+    {"type": "anime", "id": "kitsu-anime-trending", "name": "Kitsu Trending"},
+    {
+      "type": "anime",
+      "id": "kitsu-anime-top",
+      "name": "Kitsu Top",
+      "extra": [
+        {
+          "name": "genre",
+          "options": ["Action", "Comedy"],
+          "optionsLimit": 1,
+          "isRequired": true
+        },
+        {"name": "skip"}
+      ]
+    },
+    {
+      "type": "anime",
+      "id": "kitsu-anime-list",
+      "name": "Kitsu",
+      "extra": [
+        {"name": "search", "isRequired": true},
+        {"name": "skip"}
+      ]
+    }
+  ]
+}

@@ -32,6 +32,12 @@ class Channels extends Table {
   IntColumn get channelNumber => integer().nullable()();
   TextColumn get streamUrl => text()();
   TextColumn get streamType => text().withDefault(const Constant('live'))();
+
+  /// Extra HTTP headers the playlist demands for this stream, as a JSON object
+  /// of header name → value (M3U `#EXTVLCOPT:http-referrer=…`, `http-user-agent=…`).
+  /// Null when the stream plays without special headers.
+  TextColumn get httpHeaders => text().nullable()();
+
   BoolColumn get favorite => boolean().withDefault(const Constant(false))();
   BoolColumn get hidden => boolean().withDefault(const Constant(false))();
   IntColumn get sortOrder => integer().withDefault(const Constant(0))();

@@ -1,0 +1,33 @@
+{
+  "meta": {
+    "id": "kitsu:7442",
+    "type": "series",
+    "name": "Attack on Titan",
+    "poster": "https://media.kitsu.app/anime/poster_images/7442/medium.jpg",
+    "background": "https://assets.fanart.tv/fanart/attack-on-titan-551eb271053e8.jpg",
+    "description": "Centuries ago, mankind was slaughtered to near extinction.",
+    "releaseInfo": "2013",
+    "imdbRating": "8.4",
+    "imdb_id": "tt2560140",
+    "genres": ["Action", "Fantasy"],
+    "runtime": "24 min",
+    "videos": [
+      {
+        "id": "kitsu:7442:1",
+        "season": 1,
+        "episode": 1,
+        "title": "To You Two Thousand Years Later",
+        "released": "2013-04-06T15:30:00.000Z",
+        "thumbnail": "https://media.kitsu.app/episodes/thumbnails/104938/original.jpg"
+      },
+      {
+        "id": "kitsu:7442:2",
+        "season": 1,
+        "episode": 2,
+        "title": "That Day",
+        "released": "2013-04-13T15:30:00.000Z",
+        "thumbnail": "https://media.kitsu.app/episodes/thumbnails/104939/original.jpg"
+      }
+    ]
+  }
+}

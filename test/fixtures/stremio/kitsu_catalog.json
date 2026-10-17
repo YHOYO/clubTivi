@@ -1,0 +1,24 @@
+{
+  "metas": [
+    {
+      "id": "kitsu:7442",
+      "type": "series",
+      "name": "Attack on Titan",
+      "poster": "https://media.kitsu.app/anime/poster_images/7442/medium.jpg",
+      "background": "https://assets.fanart.tv/fanart/attack-on-titan-551eb271053e8.jpg",
+      "releaseInfo": "2013",
+      "imdbRating": "8.4",
+      "description": "Centuries ago, mankind was slaughtered to near extinction."
+    },
+    {
+      "id": "kitsu:11469",
+      "type": "series",
+      "name": "Boku no Hero Academia",
+      "poster": "https://media.kitsu.app/anime/poster_images/11469/medium.jpg",
+      "releaseInfo": "2016",
+      "imdbRating": "8.3"
+    },
+    {"type": "series", "name": "sin id"},
+    "basura"
+  ]
+}

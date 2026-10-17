@@ -16,6 +16,7 @@ import '../../data/datasources/local/database.dart' as db;
 import '../../data/services/app_update_service.dart';
 import '../../data/services/backup_service.dart';
 import '../../data/services/debrid_settings.dart';
+import '../../data/services/release_checksum.dart';
 import '../../data/services/stremio_addon_settings.dart';
 import '../../data/services/epg_refresh_service.dart';
 import '../providers/provider_manager.dart';
@@ -172,6 +173,20 @@ Future<void> _checkForUpdates(BuildContext context) async {
     return;
   }
 
+  // On Windows the release ships a portable ZIP plus the SHA256SUMS.txt that
+  // proves it: download and verify before telling the user anything.
+  if (Platform.isWindows && release.hasVerifiedWindowsPackage) {
+    final verified = await _downloadAndVerify(context, release);
+    if (verified != null) {
+      if (context.mounted) await _showVerifiedUpdate(context, release, verified);
+      return;
+    }
+    // Verification failed: fall through to the plain dialog so the user can
+    // still reach the release page.
+  }
+
+  if (!context.mounted) return;
+
   // New version available
   final action = await showDialog<String>(
     context: context,
@@ -200,7 +215,12 @@ Future<void> _checkForUpdates(BuildContext context) async {
           onPressed: () => Navigator.pop(ctx, 'later'),
           child: const Text('Later'),
         ),
-        if (release.apkDownloadUrl != null)
+        if (release.htmlUrl.isNotEmpty)
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'release'),
+            child: const Text('Release page'),
+          ),
+        if (release.apkDownloadUrl != null && Platform.isAndroid)
           FilledButton.icon(
             onPressed: () => Navigator.pop(ctx, 'install'),
             icon: const Icon(Icons.download, size: 18),
@@ -212,6 +232,193 @@ Future<void> _checkForUpdates(BuildContext context) async {
 
   if (action == 'install' && release.apkDownloadUrl != null && context.mounted) {
     _downloadUpdate(context, release.apkDownloadUrl!);
+  }
+  if (action == 'release' && release.htmlUrl.isNotEmpty && context.mounted) {
+    await launchUrl(Uri.parse(release.htmlUrl), mode: LaunchMode.externalApplication);
+  }
+}
+
+/// Downloads the portable package and verifies its SHA-256, with progress.
+///
+/// Returns null when the download or the verification fails: the caller then
+/// falls back to the plain "update available" dialog.
+Future<VerifiedDownload?> _downloadAndVerify(
+  BuildContext context,
+  ReleaseInfo release,
+) async {
+  var phase = DownloadPhase.manifest;
+  var progress = 0.0;
+  var dialogOpen = true;
+  late StateSetter dialogSetState;
+
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setState) {
+        dialogSetState = setState;
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A2E),
+          title: Text('Downloading update v${release.version}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              LinearProgressIndicator(
+                value: phase == DownloadPhase.download ? progress : null,
+              ),
+              const SizedBox(height: 12),
+              Text(_downloadPhaseLabel(phase, progress)),
+              const SizedBox(height: 12),
+              const Text(
+                'The SHA-256 is checked against the manifest published with '
+                'the release before anything is offered.',
+                style: TextStyle(fontSize: 12, color: Colors.white54),
+              ),
+            ],
+          ),
+        );
+      },
+    ),
+  );
+
+  void close() {
+    if (!dialogOpen) return;
+    dialogOpen = false;
+    if (context.mounted) Navigator.of(context).pop();
+  }
+
+  void reportError(String message) {
+    close();
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  try {
+    final verified = await AppUpdateService.downloadVerifiedPackage(
+      release,
+      onPhase: (next) {
+        phase = next;
+        try {
+          dialogSetState(() {});
+        } catch (_) {}
+      },
+      onProgress: (next) {
+        progress = next;
+        try {
+          dialogSetState(() {});
+        } catch (_) {}
+      },
+    );
+    close();
+    return verified;
+  } on ChecksumUnavailable catch (e) {
+    reportError(e.message);
+  } on ChecksumMismatch catch (e) {
+    reportError(e.message);
+  } catch (e) {
+    reportError('Download failed: $e');
+  }
+  return null;
+}
+
+String _downloadPhaseLabel(DownloadPhase phase, double progress) {
+  switch (phase) {
+    case DownloadPhase.manifest:
+      return 'Fetching the SHA-256 manifest\u2026';
+    case DownloadPhase.download:
+      return 'Downloading\u2026 ${(progress * 100).toStringAsFixed(0)}%';
+    case DownloadPhase.verify:
+      return 'Verifying SHA-256\u2026';
+  }
+}
+
+Future<void> _showVerifiedUpdate(
+  BuildContext context,
+  ReleaseInfo release,
+  VerifiedDownload verified,
+) async {
+  final sizeMb = (verified.sizeBytes / (1024 * 1024)).toStringAsFixed(1);
+
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: const Color(0xFF1A1A2E),
+      title: Row(
+        children: [
+          const Icon(Icons.verified_user, color: Colors.greenAccent, size: 22),
+          const SizedBox(width: 8),
+          Expanded(child: Text('v${release.version} downloaded & verified')),
+        ],
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '$sizeMb MB, and the SHA-256 matches the manifest published '
+              'with the release.',
+            ),
+            const SizedBox(height: 12),
+            SelectableText(
+              'SHA-256 ${verified.sha256}',
+              style: const TextStyle(fontSize: 11, color: Colors.white54),
+            ),
+            const SizedBox(height: 6),
+            SelectableText(
+              verified.file.path,
+              style: const TextStyle(fontSize: 11, color: Colors.white54),
+            ),
+            if (release.body.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(
+                release.body.length > 300
+                    ? '${release.body.substring(0, 300)}\u2026'
+                    : release.body,
+                style: const TextStyle(fontSize: 13, color: Colors.white70),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        if (release.htmlUrl.isNotEmpty)
+          TextButton(
+            onPressed: () => launchUrl(
+              Uri.parse(release.htmlUrl),
+              mode: LaunchMode.externalApplication,
+            ),
+            child: const Text('Release page'),
+          ),
+        FilledButton.icon(
+          onPressed: () => _revealInFileManager(verified.file),
+          icon: const Icon(Icons.folder_open, size: 18),
+          label: const Text('Show in folder'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Close'),
+        ),
+      ],
+    ),
+  );
+}
+
+Future<void> _revealInFileManager(File file) async {
+  try {
+    if (Platform.isWindows) {
+      await Process.run('explorer', ['/select,${file.path}']);
+    } else if (Platform.isMacOS) {
+      await Process.run('open', ['-R', file.path]);
+    } else {
+      await Process.run('xdg-open', [file.parent.path]);
+    }
+  } catch (e) {
+    debugPrint('Could not open the file manager: $e');
   }
 }
 
@@ -371,6 +578,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               _UserAgentTile(),
               _BufferSizeTile(),
               _FailoverModeTile(),
+              _ResumeLastChannelTile(),
             ],
           ),
           _SettingsSection(
@@ -451,15 +659,22 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ListTile(
                 leading: const Icon(Icons.system_update_rounded),
                 title: const Text('Check for Updates'),
-                subtitle: const Text('Download latest version from GitHub'),
+                subtitle: Text(
+                  'Downloads from github.com/${AppUpdateService.repository}',
+                ),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => _checkForUpdates(context),
               ),
               ListTile(
                 leading: const Icon(Icons.code_rounded),
                 title: const Text('Source Code'),
-                subtitle: const Text('github.com/clubanderson/clubTivi'),
-                onTap: () => launchUrl(Uri.parse('https://github.com/clubanderson/clubTivi')),
+                subtitle: Text('github.com/${AppUpdateService.repository}'),
+                onTap: () => launchUrl(
+                  Uri.parse(
+                    'https://github.com/${AppUpdateService.repository}',
+                  ),
+                  mode: LaunchMode.externalApplication,
+                ),
               ),
             ],
           ),
@@ -1595,6 +1810,52 @@ class _BufferSizeTileState extends State<_BufferSizeTile> {
           setState(() => _buffer = picked);
         }
       },
+    );
+  }
+}
+
+/// Vuelve a poner el último canal visitado al abrir la app. El historial lo
+/// guarda el reproductor (`channel_history`), no esta pantalla.
+class _ResumeLastChannelTile extends StatefulWidget {
+  const _ResumeLastChannelTile();
+
+  @override
+  State<_ResumeLastChannelTile> createState() => _ResumeLastChannelTileState();
+}
+
+class _ResumeLastChannelTileState extends State<_ResumeLastChannelTile> {
+  /// La misma clave que lee la lista de canales al arrancar.
+  static const _key = 'resume_last_channel';
+  bool _value = true;
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    SharedPreferences.getInstance().then((prefs) {
+      if (!mounted) return;
+      setState(() {
+        _value = prefs.getBool(_key) ?? true;
+        _loaded = true;
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SwitchListTile(
+      secondary: const Icon(Icons.play_circle_outline_rounded),
+      title: const Text('Resume the last channel'),
+      subtitle: const Text(
+          'Open clubTivi on the last channel you watched'),
+      value: _value,
+      onChanged: _loaded
+          ? (value) async {
+              setState(() => _value = value);
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setBool(_key, value);
+            }
+          : null,
     );
   }
 }

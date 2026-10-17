@@ -151,7 +151,74 @@ void main() {
     expect(notifier.state.addons.last.enabled, isFalse);
   });
 
-  test('un manifest sin stream no llega a guardarse desde la UI', () {
+  test('los catálogos y su estado de configuración sobreviven al reinicio',
+      () async {
+    const manifest = StremioManifest(
+      id: 'community.anime.kitsu',
+      name: 'Anime Kitsu',
+      version: '0.0.10',
+      types: ['anime'],
+      resources: ['catalog', 'meta'],
+      catalogs: [
+        StremioCatalog(
+          type: 'anime',
+          id: 'kitsu-anime-top',
+          name: 'Kitsu Top',
+          extra: [
+            StremioCatalogExtra(
+              name: 'genre',
+              isRequired: true,
+              options: ['Action'],
+            ),
+          ],
+        ),
+        StremioCatalog(
+          type: 'anime',
+          id: 'kitsu-anime-list',
+          extra: [StremioCatalogExtra(name: 'search', isRequired: true)],
+        ),
+      ],
+      configurable: true,
+      configurationRequired: true,
+    );
+    final notifier = StremioAddonSettingsNotifier();
+    await notifier.load();
+    await notifier.save(manifest, 'anime-kitsu.strem.fun');
+
+    final reloaded = StremioAddonSettingsNotifier();
+    await reloaded.load();
+    final addon = reloaded.state.addons.single;
+
+    expect(addon.catalogs.map((c) => c.id),
+        ['kitsu-anime-top', 'kitsu-anime-list']);
+    expect(addon.browsableCatalogs.map((c) => c.id), ['kitsu-anime-top'],
+        reason: 'el catálogo de sólo búsqueda no se pinta como fila');
+    expect(addon.catalogs.first.genreExtra?.options, ['Action']);
+    expect(addon.types, ['anime']);
+    expect(addon.configurable, isTrue);
+    expect(addon.configurationRequired, isTrue);
+    expect(addon.supportsStreams, isFalse,
+        reason: 'un addon de sólo catálogo no se consulta al reproducir');
+  });
+
+  test('una entrada antigua sin catálogos sigue cargando', () async {
+    SharedPreferences.setMockInitialValues({
+      stremioAddonsKey: jsonEncode({
+        'version': 1,
+        'addons': [
+          {'url': 'https://a.test', 'name': 'A', 'manifestId': 'a'},
+        ],
+      }),
+    });
+
+    final notifier = StremioAddonSettingsNotifier();
+    await notifier.load();
+
+    expect(notifier.state.addons, hasLength(1));
+    expect(notifier.state.addons.single.hasCatalogs, isFalse);
+  });
+
+  test('un manifest sin stream ni catálogo no llega a guardarse desde la UI', () {
     // La validación vive en StremioManifest: aquí se fija que el error explica
     // el motivo, que es lo que la pantalla muestra al usuario.
     expect(
