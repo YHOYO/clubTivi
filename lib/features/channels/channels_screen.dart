@@ -59,13 +59,12 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
 
   /// Maps channel ID → user-set vanity name (original name preserved in DB)
   Map<String, String> _vanityNames = {};
-  Set<String> _validEpgChannelIds = {};
   Map<String, String> _rawToPrefixedEpg = {}; // XMLTV channelId → prefixed id
   Map<String, String> _epgNameToId =
       {}; // normalized EPG displayName → prefixed id
   Map<String, String> _epgCallSignToId =
       {}; // call sign (e.g. WABC) → prefixed id
-  bool _showGuideView = true;
+  final bool _showGuideView = true;
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
   List<String> _searchHistory = [];
@@ -74,13 +73,8 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
   final _channelListController = ScrollController();
   late final ScrollController _guideScrollController;
   Timer? _guideIdleTimer;
-  DateTime? _guideDayStart; // stored for snap-back calculation
   Timer? _searchDebounce;
 
-  // Overlay state
-  bool _showOverlay = false;
-  // _showDebugOverlay removed — debug info is now a dialog
-  Timer? _overlayTimer;
   Timer? _nowPlayingTimer;
   final _focusNode = FocusNode();
 
@@ -94,7 +88,8 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
 
   // Sidebar state
   bool _sidebarExpanded = true;
-  Set<String> _expandedSections = {'favorites', 'history'};
+  // La sección del historial se abre sola: es donde vive «seguir viendo».
+  final Set<String> _expandedSections = {'favorites', 'history'};
   final _sidebarSearchController = TextEditingController();
   final _sidebarFocusNode = FocusScopeNode(debugLabel: 'sidebar');
   final _sidebarAllItemFocusNode = FocusNode(debugLabel: 'sidebar-all');
@@ -127,8 +122,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
   Map<String, List<String>> _providerGroups = {};
   // Track which providers' channels have been loaded into _allChannels
   final Set<String> _loadedProviders = {};
-  // True while background is still loading all channels
-  bool _backgroundLoading = false;
   // Favorite lists state
   List<db.FavoriteList> _favoriteLists = [];
 
@@ -188,7 +181,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
   /// channelId → list of group memberships (for fast player lookup)
   Map<String, List<db.FailoverGroupMembership>> _failoverGroupIndex = {};
   final Set<int> _expandedFailoverGroups = {};
-  bool _lastClickShift = false;
 
   // Time format
   bool _use24HourTime = false;
@@ -471,8 +463,9 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
   }
 
   void _suggestAlternative() {
-    if (_selectedIndex < 0 || _selectedIndex >= _filteredChannels.length)
+    if (_selectedIndex < 0 || _selectedIndex >= _filteredChannels.length) {
       return;
+    }
     final current = _filteredChannels[_selectedIndex];
     final currentName = current.name
         .toLowerCase()
@@ -831,7 +824,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
     _guideScrollController.dispose();
     _guideIdleTimer?.cancel();
     _searchDebounce?.cancel();
-    _overlayTimer?.cancel();
     _nowPlayingTimer?.cancel();
     _volumeOverlayTimer?.cancel();
     _topBarTimer?.cancel();
@@ -880,21 +872,23 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
     }
 
     // ── Micro-phase 2: favorite channels (direct ID query, ~18 rows) ──
-    if (mounted)
+    if (mounted) {
       setState(
         () => _loadStatus = 'Loading ${favChannelIds.length} favorites…',
       );
+    }
     List<db.Channel> favChannels = [];
     if (favChannelIds.isNotEmpty) {
       favChannels = await database.getChannelsByIds(favChannelIds);
     }
 
     if (!mounted) return;
-    if (mounted)
+    if (mounted) {
       setState(
         () => _loadStatus =
             'Found ${providers.length} providers, ${favChannels.length} favorites',
       );
+    }
     // FIRST RENDER — user sees Favorites immediately
     setState(() {
       _initialLoadDone = true;
@@ -920,7 +914,9 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
     final pGroups = bgResults[0] as Map<String, List<String>>;
     final foGroups = bgResults[1] as List<db.FailoverGroup>;
     final allGroupNames = <String>{};
-    for (final gl in pGroups.values) allGroupNames.addAll(gl);
+    for (final gl in pGroups.values) {
+      allGroupNames.addAll(gl);
+    }
 
     final foGroupMembers = <int, List<String>>{};
     for (final g in foGroups) {
@@ -945,7 +941,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
     if (mounted) setState(() => _epgLoading = false);
 
     // ── Background: load all provider channels incrementally ──
-    _backgroundLoading = true;
     for (final provider in providers) {
       if (!mounted) return;
       final channels = await database.getChannelsForProvider(provider.id);
@@ -966,7 +961,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
       // volver a él sin esperar a que el usuario busque su categoría.
       _tryResumePendingChannel();
     }
-    _backgroundLoading = false;
 
     // Re-index EPG with full channel set
     if (mounted) _loadEpgData(database, _allChannels, favChannelIds);
@@ -1098,7 +1092,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
     setState(() {
       _nowPlaying = nowPlaying;
       _epgMappings = epgMap;
-      _validEpgChannelIds = validIds;
       _rawToPrefixedEpg = rawToPrefixed;
       _epgNameToId = epgNameToId;
       _epgCallSignToId = epgCallSignToId;
@@ -1435,14 +1428,14 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
       _selectedIndex = index;
       _previewChannel = channel;
     });
-    _showInfoOverlay(channel, index);
     _saveSession();
   }
 
   /// Toggle between current channel and the last channel.
   void _goBackChannel() {
-    if (_previousIndex < 0 || _previousIndex >= _filteredChannels.length)
+    if (_previousIndex < 0 || _previousIndex >= _filteredChannels.length) {
       return;
+    }
     _pendingChannelId = null;
     _autoResumeDone = true;
     final swapTo = _previousIndex;
@@ -1463,7 +1456,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
       _selectedIndex = swapTo;
       _previewChannel = channel;
     });
-    _showInfoOverlay(channel, swapTo);
   }
 
   /// Extra HTTP headers the playlist attached to this channel (#EXTVLCOPT).
@@ -1471,15 +1463,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
   Map<String, String> _httpHeadersFor(db.Channel channel) =>
       models.Channel.decodeHttpHeaders(channel.httpHeaders);
 
-  void _showInfoOverlay(db.Channel channel, int index) {
-    setState(() => _showOverlay = true);
-
-    // Reset auto-hide timer
-    _overlayTimer?.cancel();
-    _overlayTimer = Timer(const Duration(seconds: 5), () {
-      if (mounted) setState(() => _showOverlay = false);
-    });
-  }
 
   Future<void> _goFullscreen(db.Channel channel) async {
     final channelMaps = _filteredChannels
@@ -1577,16 +1560,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
     } catch (_) {
       return [];
     }
-  }
-
-  /// All current/upcoming programme titles for a channel (for search).
-  List<String> _getChannelProgrammeTitles(db.Channel channel) {
-    final epgId = _getEpgId(channel);
-    if (epgId == null) return const [];
-    return _nowPlaying
-        .where((p) => p.epgChannelId == epgId)
-        .map((p) => p.title)
-        .toList();
   }
 
   db.EpgProgramme? _getEpgProgramme(db.Channel channel) {
@@ -1837,7 +1810,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                 'assets/icon/clubtivi-icon.png',
                 width: 80,
                 height: 80,
-                errorBuilder: (_, __, ___) =>
+                errorBuilder: (_, _, _) =>
                     const Icon(Icons.tv, size: 64, color: Color(0xFF6C5CE7)),
               ),
               const SizedBox(height: 12),
@@ -1884,8 +1857,9 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
             if (event is! KeyDownEvent) return KeyEventResult.ignored;
             if (_searchFocusNode.hasFocus) return KeyEventResult.ignored;
             // Don't swallow keys when a dialog/overlay is open
-            if (ModalRoute.of(context)?.isCurrent != true)
+            if (ModalRoute.of(context)?.isCurrent != true) {
               return KeyEventResult.ignored;
+            }
             final key = event.logicalKey;
             // Let Flutter's spatial focus system handle D-pad arrows
             if (key == LogicalKeyboardKey.arrowUp ||
@@ -2043,8 +2017,9 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                       _searchHistory.isNotEmpty) {
                     return _searchHistory;
                   }
-                  if (_searchHistory.isEmpty)
+                  if (_searchHistory.isEmpty) {
                     return const Iterable<String>.empty();
+                  }
                   final q = textEditingValue.text.toLowerCase();
                   return _searchHistory.where(
                     (h) => h.toLowerCase().contains(q),
@@ -2103,8 +2078,9 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                       );
                     },
                     onSubmitted: (value) {
-                      if (value.trim().isNotEmpty)
+                      if (value.trim().isNotEmpty) {
                         _addSearchHistory(value.trim());
+                      }
                       _focusNode.requestFocus();
                     },
                   );
@@ -3291,7 +3267,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                           color: Colors.white38,
                         ),
                         const SizedBox(width: 4),
-                        if (check != null) check,
+                        ?check,
                         Icon(
                           icon,
                           size: 14,
@@ -3625,7 +3601,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                   alignment: Alignment.centerLeft,
                   child: Row(
                     children: [
-                      if (check != null) check,
+                      ?check,
                       if (icon != null) ...[
                         Icon(
                           icon,
@@ -3647,7 +3623,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      if (trailing != null) trailing,
+                      ?trailing,
                     ],
                   ),
                 ),
@@ -4222,7 +4198,9 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
     if (_failoverGroups.isEmpty ||
         _multiSelectMode ||
         _searchQuery.isNotEmpty ||
-        _sidebarSearchQuery.isNotEmpty) return 0;
+        _sidebarSearchQuery.isNotEmpty) {
+      return 0;
+    }
     return _failoverGroups.where((g) {
       final memberIds = _failoverGroupMembers[g.id] ?? [];
       return memberIds.isNotEmpty;
@@ -4240,7 +4218,9 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
   }) {
     // Resolve the foIndex-th non-empty failover group
     final channelById = <String, db.Channel>{};
-    for (final c in _allChannels) channelById[c.id] = c;
+    for (final c in _allChannels) {
+      channelById[c.id] = c;
+    }
     var count = 0;
     late db.FailoverGroup group;
     late List<db.Channel> members;
@@ -4372,7 +4352,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                                       width: 28,
                                       height: 28,
                                       fit: BoxFit.contain,
-                                      errorBuilder: (_, __, ___) => Container(
+                                      errorBuilder: (_, _, _) => Container(
                                         width: 28,
                                         height: 28,
                                         color: const Color(0xFF16213E),
@@ -4477,7 +4457,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                                 child: Transform.translate(
                                   offset: Offset(-hOffset, 0),
                                   child: _buildGuideRowProgrammes(
-                                    epgMember!,
+                                    epgMember,
                                     database,
                                     dayStart,
                                     dayEnd,
@@ -4563,7 +4543,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                                   ? Image.network(
                                       ch.tvgLogo!,
                                       fit: BoxFit.contain,
-                                      errorBuilder: (_, __, ___) => const Icon(
+                                      errorBuilder: (_, _, _) => const Icon(
                                         Icons.tv,
                                         size: 12,
                                         color: Colors.white24,
@@ -4996,7 +4976,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                               ? Image.network(
                                   primary.tvgLogo!,
                                   fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => Container(
+                                  errorBuilder: (_, _, _) => Container(
                                     color: const Color(0xFF16213E),
                                     child: const Icon(
                                       Icons.bolt,
@@ -5174,7 +5154,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                                         ? Image.network(
                                             ch.tvgLogo!,
                                             fit: BoxFit.cover,
-                                            errorBuilder: (_, __, ___) =>
+                                            errorBuilder: (_, _, _) =>
                                                 const Icon(
                                               Icons.tv,
                                               size: 14,
@@ -5292,7 +5272,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
       _selectedIndex = -1;
       _previewChannel = target;
     });
-    _showInfoOverlay(target, _selectedIndex);
     _saveSession();
   }
 
@@ -5892,7 +5871,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                           checkedIds.remove(list.id);
                         }
                         setSheetState(() {});
-                        resetAutoClose(Navigator.of(ctx));
+                        if (ctx.mounted) resetAutoClose(Navigator.of(ctx));
                       },
                     );
                   }),
@@ -6039,8 +6018,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                     : ReorderableListView.builder(
                         shrinkWrap: true,
                         itemCount: lists.length,
-                        onReorder: (oldIdx, newIdx) async {
-                          if (newIdx > oldIdx) newIdx--;
+                        onReorderItem: (oldIdx, newIdx) async {
                           final item = lists.removeAt(oldIdx);
                           lists.insert(newIdx, item);
                           setDialogState(() {});
@@ -6305,8 +6283,9 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                             dayStart.day,
                             dayStart.hour,
                           );
-                          if (t.isBefore(dayStart))
+                          if (t.isBefore(dayStart)) {
                             t = t.add(const Duration(hours: 1));
+                          }
                           while (t.isBefore(dayEnd)) {
                             final offsetMin = t.difference(dayStart).inMinutes;
                             labels.add(
@@ -6407,8 +6386,9 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                           focusNode: index == 0 ? _firstChannelFocusNode : null,
                           autofocus: index == 0 && Platform.isAndroid,
                           onFocusChange: (hasFocus) {
-                            if (hasFocus && Platform.isAndroid)
+                            if (hasFocus && Platform.isAndroid) {
                               _selectChannel(index);
+                            }
                           },
                           onKeyEvent: (node, event) {
                             final key = event.logicalKey;
@@ -6476,8 +6456,9 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                               return KeyEventResult.handled;
                             }
 
-                            if (event is! KeyDownEvent)
+                            if (event is! KeyDownEvent) {
                               return KeyEventResult.ignored;
+                            }
                             if (isCenterKey) {
                               if (_multiSelectMode) {
                                 setState(() {
@@ -6538,8 +6519,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                                   final hwPressed = HardwareKeyboard
                                       .instance.logicalKeysPressed;
                                   // ignore: deprecated_member_use
-                                  final rawPressed =
-                                      RawKeyboard.instance.keysPressed;
+                                  final rawPressed = RawKeyboard.instance.keysPressed;
                                   final shiftOrCmd = hwPressed.contains(
                                         LogicalKeyboardKey.shiftLeft,
                                       ) ||
@@ -6713,8 +6693,8 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                                                       fit: BoxFit.contain,
                                                       errorBuilder: (
                                                         _,
-                                                        __,
-                                                        ___,
+                                                        _,
+                                                        _,
                                                       ) =>
                                                           Container(
                                                         width: 28,

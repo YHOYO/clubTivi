@@ -70,7 +70,7 @@ class ProviderHealthSummary {
   String get label {
     if (!hasData) return 'Not checked yet';
     final parts = <String>[
-      '$working/${total} work',
+      '$working/$total work',
       if (slow > 0) '$slow slow',
       if (blocked > 0) '$blocked blocked by the network',
       if (serverSide > 0) '$serverSide the server refused',

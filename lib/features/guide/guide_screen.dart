@@ -27,9 +27,6 @@ class _GuideScreenState extends ConsumerState<GuideScreen> {
   /// Pixels per minute for the timeline.
   static const _pixelsPerMinute = 4.0;
 
-  /// Total width of the 24-hour timeline.
-  static double get _totalWidth => 24 * 60 * _pixelsPerMinute;
-
   // EPG mapping data (loaded once)
   Map<String, String> _epgMappings = {};
   Set<String> _validEpgChannelIds = {};
@@ -427,7 +424,7 @@ class _ChannelGuideRowState extends State<_ChannelGuideRow> {
                       Padding(
                         padding: const EdgeInsets.only(right: 6),
                         child: Image.network(widget.channelLogo!, width: 24, height: 24,
-                          errorBuilder: (_, __, ___) => const Icon(Icons.tv, size: 18, color: Colors.white24)),
+                          errorBuilder: (_, _, _) => const Icon(Icons.tv, size: 18, color: Colors.white24)),
                       ),
                     Expanded(
                       child: Text(widget.channelName,

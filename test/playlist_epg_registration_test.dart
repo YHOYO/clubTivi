@@ -2,7 +2,6 @@
 // anuncia en su cabecera (#EXTM3U url-tvg="…"). Esta prueba levanta un servidor
 // local con una lista y su guía y comprueba la cadena entera: lista → fuente
 // EPG → programas guardados.
-import 'dart:async';
 import 'dart:io';
 
 import 'package:clubtivi/data/datasources/local/database.dart' as db;

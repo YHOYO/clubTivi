@@ -1,7 +1,6 @@
 // La lista fija de favoritos: la estrella de cada fila añade y quita de aquí,
 // así que tiene que existir siempre (una sola vez) y alternar sin repetir.
 import 'package:clubtivi/data/datasources/local/database.dart' as db;
-import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 

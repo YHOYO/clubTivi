@@ -520,7 +520,7 @@ class ChannelProbeService {
     void Function(int limit, int maxLimit)? onConcurrencyChanged,
     bool Function()? isCancelled,
   }) async {
-    final cancelled = () => isCancelled?.call() ?? false;
+    bool cancelled() => isCancelled?.call() ?? false;
     final queue = List.of(channels);
     final total = channels.length;
     final unanswered = <db.Channel>[];

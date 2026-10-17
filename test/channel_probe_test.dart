@@ -1,7 +1,6 @@
 // La detección de canales que sirven y canales que no: se comprueba contra un
 // servidor HTTP real (en loopback) para medir exactamente lo que ve la app:
 // códigos de estado, respuestas que no son listas y servidores que no contestan.
-import 'dart:async';
 import 'dart:io';
 
 import 'package:clubtivi/data/datasources/local/database.dart' as db;
@@ -220,7 +219,7 @@ void main() {
           retryPending = pending;
           choked = false; // el servidor sólo se ahogaba con carga
         },
-        onRetryResult: (_, __, ___, ____) => retryReports++,
+        onRetryResult: (_, _, _, _) => retryReports++,
         onResult: (channel, result, done, total) {
           order.add(channel.id);
           finalVerdicts[channel.id] = result;
@@ -254,8 +253,8 @@ void main() {
         concurrency: 3,
         timeout: const Duration(milliseconds: 400),
         retryTimeout: const Duration(milliseconds: 600),
-        onRetryResult: (_, __, ___, ____) => retryReports++,
-        onResult: (channel, result, _, __) => verdicts[channel.id] = result,
+        onRetryResult: (_, _, _, _) => retryReports++,
+        onResult: (channel, result, _, _) => verdicts[channel.id] = result,
       );
 
       expect(retryReports, 3);
@@ -272,7 +271,7 @@ void main() {
         [channel('/gone.m3u8'), channel('/ok.m3u8')],
         concurrency: 2,
         onRetryStart: (_) => retries++,
-        onResult: (channel, result, _, __) => verdicts[channel.id] = result,
+        onResult: (channel, result, _, _) => verdicts[channel.id] = result,
       );
 
       expect(retries, 0);
@@ -289,7 +288,7 @@ void main() {
         [channel('/forbidden.m3u8')],
         retryTimeout: const Duration(milliseconds: 800),
         onRetryStart: (p) => pending = p,
-        onResult: (channel, result, _, __) => verdicts[channel.id] = result,
+        onResult: (channel, result, _, _) => verdicts[channel.id] = result,
       );
 
       expect(pending, 1);
@@ -310,8 +309,8 @@ void main() {
         retryTimeout: const Duration(milliseconds: 400),
         maxRetries: 2,
         onRetryStart: (p) => pending = p,
-        onRetryResult: (_, __, ___, ____) => retried++,
-        onResult: (_, __, ___, ____) {},
+        onRetryResult: (_, _, _, _) => retried++,
+        onResult: (_, _, _, _) {},
       );
 
       expect(pending, 2);
@@ -325,7 +324,7 @@ void main() {
         timeout: const Duration(milliseconds: 300),
         retryTimeouts: false,
         onRetryStart: (_) => retried++,
-        onResult: (_, __, ___, ____) {},
+        onResult: (_, _, _, _) {},
       );
       expect(retried, 0);
     });
@@ -342,7 +341,7 @@ void main() {
         timeout: const Duration(milliseconds: 400),
         retryTimeouts: false,
         isCancelled: () => cancelled,
-        onResult: (_, __, ___, ____) {
+        onResult: (_, _, _, _) {
           reported++;
           cancelled = true; // como el botón STOP del diálogo
         },

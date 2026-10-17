@@ -721,9 +721,9 @@ void main() {
             routes: <RouteBase>[
               GoRoute(
                 path: '/providers',
-                builder: (_, __) => const ProvidersScreen(),
+                builder: (_, _) => const ProvidersScreen(),
               ),
-              GoRoute(path: '/', builder: (_, __) => const ChannelsScreen()),
+              GoRoute(path: '/', builder: (_, _) => const ChannelsScreen()),
             ],
           ),
         ),
@@ -755,7 +755,7 @@ void main() {
     // ignore: avoid_print
     print('[verify] CHECK de proveedor: tira en marcha='
         '${find.byType(ChannelHealthStrip).evaluate().isNotEmpty} '
-        'veredictos=${done} '
+        'veredictos=$done '
         'título=${find.textContaining('Scan fixtures').evaluate().isNotEmpty}');
     expect(done, isTrue,
         reason: 'la comprobación pedida por el proveedor mide todos sus canales, '

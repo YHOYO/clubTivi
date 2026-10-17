@@ -145,8 +145,8 @@ void main() {
         timeout: const Duration(milliseconds: 700),
         retryTimeout: const Duration(milliseconds: 700),
         onConcurrencyChanged: (limit, max) => limits.add(limit),
-        onRetryResult: (_, __, ___, ____) => retried++,
-        onResult: (channel, result, _, __) => verdicts[channel.id] = result,
+        onRetryResult: (_, _, _, _) => retried++,
+        onResult: (channel, result, _, _) => verdicts[channel.id] = result,
       );
 
       expect(verdicts, hasLength(channels.length));
@@ -182,8 +182,8 @@ void main() {
         timeout: const Duration(milliseconds: 700),
         retryTimeouts: false,
         adaptConcurrency: false,
-        onConcurrencyChanged: (_, __) => changes++,
-        onResult: (_, __, ___, ____) {},
+        onConcurrencyChanged: (_, _) => changes++,
+        onResult: (_, _, _, _) {},
       );
       expect(changes, 0);
     });

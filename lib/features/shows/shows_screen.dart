@@ -69,7 +69,7 @@ class _ShowsScreenState extends ConsumerState<ShowsScreen> {
       bindings: {
         const SingleActivator(LogicalKeyboardKey.escape): () {
           Future.microtask(() {
-            if (!mounted) return;
+            if (!context.mounted) return;
             if (context.canPop()) {
               context.pop();
             } else {
@@ -349,12 +349,12 @@ class _ShowsScreenState extends ConsumerState<ShowsScreen> {
             ref.read(showSearchQueryProvider.notifier).state = '';
           });
         } else {
+          final router = GoRouter.of(context);
           Future.microtask(() {
-            if (!mounted) return;
-            if (context.canPop()) {
-              context.pop();
+            if (router.canPop()) {
+              router.pop();
             } else {
-              context.go('/');
+              router.go('/');
             }
           });
         }
@@ -412,13 +412,13 @@ class _ShowPosterCard extends ConsumerWidget {
                                   fit: BoxFit.cover,
                                   width: double.infinity,
                                   height: double.infinity,
-                                  placeholder: (_, __) => Container(
+                                  placeholder: (_, _) => Container(
                                     color: const Color(0xFF1A1A2E),
                                     child: const Center(
                                       child: Icon(Icons.movie, color: Colors.white24, size: 40),
                                     ),
                                   ),
-                                  errorWidget: (_, __, ___) => _placeholderPoster(),
+                                  errorWidget: (_, _, _) => _placeholderPoster(),
                                 )
                               : _placeholderPoster(),
                         ),

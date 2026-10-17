@@ -4,7 +4,6 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
-import 'package:media_kit/src/player/native/player/real.dart' as native_player;
 import 'package:media_kit_video/media_kit_video.dart';
 
 import 'adaptive_buffer.dart';
@@ -129,7 +128,7 @@ class PlayerService {
 
   Future<void> _initPlayer(Player p) async {
     final np = p.platform;
-    if (np is native_player.NativePlayer) {
+    if (np is NativePlayer) {
       // Downmix surround to stereo for output compatibility
       await np.setProperty('audio-channels', 'stereo');
       // Normalize volume when downmixing surround to stereo
@@ -328,7 +327,7 @@ class PlayerService {
   /// referrer-locked channel would leak into the next one.
   Future<void> _applyHttpHeaders() async {
     final np = player.platform;
-    if (np is! native_player.NativePlayer) return;
+    if (np is! NativePlayer) return;
     final fields = _httpHeaders.entries
         .map((e) => '${e.key}: ${e.value}')
         .join(',');
@@ -456,7 +455,7 @@ class PlayerService {
   /// Returns null if unavailable (e.g. on web or before player init).
   Future<String?> getMpvProperty(String name) async {
     final np = player.platform;
-    if (np is native_player.NativePlayer) {
+    if (np is NativePlayer) {
       try {
         return await np.getProperty(name);
       } catch (_) {
@@ -469,7 +468,7 @@ class PlayerService {
   /// Take a screenshot via mpv's screenshot-to-file command.
   Future<String?> takeScreenshot(String path) async {
     final np = player.platform;
-    if (np is native_player.NativePlayer) {
+    if (np is NativePlayer) {
       try {
         await np.setProperty('screenshot-format', 'png');
         await np.command(['screenshot-to-file', path, 'video']);
@@ -612,7 +611,7 @@ class PlayerService {
 
     // Configure warm player: muted, with loudnorm, no video output
     final np = _warmPlayer!.platform;
-    if (np is native_player.NativePlayer) {
+    if (np is NativePlayer) {
       np.setProperty('vid', 'no'); // disable video decoding
       np.setProperty('audio-channels', 'stereo');
       np.setProperty('audio-normalize-downmix', 'yes');

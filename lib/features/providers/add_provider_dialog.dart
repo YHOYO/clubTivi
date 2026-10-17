@@ -217,6 +217,7 @@ class _AddProviderPageState extends ConsumerState<_AddProviderPage> {
             return;
           }
           Future.microtask(() {
+            if (!context.mounted) return;
             Navigator.of(context).pop();
           });
         },
@@ -239,7 +240,7 @@ class _AddProviderPageState extends ConsumerState<_AddProviderPage> {
           children: [
             // Provider type dropdown — D-pad navigable as a form field
             DropdownButtonFormField<_ProviderType>(
-              value: _type,
+              initialValue: _type,
               autofocus: true,
               decoration: const InputDecoration(
                 labelText: 'Provider Type',
