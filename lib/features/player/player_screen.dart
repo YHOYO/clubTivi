@@ -29,6 +29,14 @@ class PlayerScreen extends ConsumerStatefulWidget {
   final String streamUrl;
   final String channelName;
   final String? channelLogo;
+
+  /// Cabeceras que exige el origen (Referer, User-Agent…). Si traen algo, la
+  /// reproducción pasa por el proxy local.
+  final Map<String, String> headers;
+
+  /// El addon marcó la fuente como no reproducible tal cual (`notWebReady`).
+  final bool needsProxy;
+
   final List<String> alternativeUrls;
   final List<Map<String, dynamic>> channels;
   final int currentIndex;
@@ -38,6 +46,8 @@ class PlayerScreen extends ConsumerStatefulWidget {
     required this.streamUrl,
     required this.channelName,
     this.channelLogo,
+    this.headers = const {},
+    this.needsProxy = false,
     this.alternativeUrls = const [],
     this.channels = const [],
     this.currentIndex = 0,
@@ -220,6 +230,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         !(playerService.player.state.playing ||
             playerService.player.state.buffering)) {
       playerService.play(urls[_currentUrlIndex],
+        headers: _currentUrlIndex == 0 ? widget.headers : const {},
+        needsProxy: _currentUrlIndex == 0 && widget.needsProxy,
         channelId: widget.channels.isNotEmpty ? widget.channels[_channelIndex]['id'] as String? : null,
         epgChannelId: widget.channels.isNotEmpty ? widget.channels[_channelIndex]['epgChannelId'] as String? : null,
         tvgId: widget.channels.isNotEmpty ? widget.channels[_channelIndex]['tvgId'] as String? : null,
