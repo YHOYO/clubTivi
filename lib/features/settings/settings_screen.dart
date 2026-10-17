@@ -13,9 +13,11 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/countdown_snackbar.dart';
 import '../../core/weather_service.dart';
 import '../../data/datasources/local/database.dart' as db;
+import '../../data/models/language_preferences.dart';
 import '../../data/services/app_update_service.dart';
 import '../../data/services/backup_service.dart';
 import '../../data/services/debrid_settings.dart';
+import '../../data/services/language_preferences_store.dart';
 import '../../data/services/release_checksum.dart';
 import '../../data/services/stremio_addon_settings.dart';
 import '../../data/services/epg_refresh_service.dart';
@@ -1157,8 +1159,29 @@ class _ShowsApiKeysSectionState extends ConsumerState<_ShowsApiKeysSection> {
           trailing: const Icon(Icons.chevron_right),
           onTap: () => context.push('/stremio-addons'),
         ),
+        ListTile(
+          leading: const Icon(Icons.translate_rounded),
+          title: const Text('Audio & Subtitles'),
+          subtitle: Text(
+            _languageSummary(ref.watch(languagePreferencesProvider)),
+            style: const TextStyle(fontSize: 12, color: Colors.white38),
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/language-settings'),
+        ),
       ],
     );
+  }
+
+  /// Resumen de una línea: "LAT → ESP → ENG • Subtitles: Español".
+  String _languageSummary(LanguagePreferences preferences) {
+    final audio = preferences.audioOrder.isEmpty
+        ? 'No audio priority'
+        : preferences.audioOrder.map(languageBadge).join(' → ');
+    final subtitles = preferences.subtitleOrder.isEmpty
+        ? 'None'
+        : languageLabel(preferences.subtitleOrder.first);
+    return '$audio • Subtitles: $subtitles';
   }
 
   Future<void> _saveTrakt() async {

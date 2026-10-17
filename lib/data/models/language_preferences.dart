@@ -69,6 +69,57 @@ String? normalizeLanguageCode(String? raw) {
   return value;
 }
 
+/// Catálogo de idiomas que la interfaz ofrece para audio y subtítulos.
+///
+/// No pretende ser exhaustivo: cubre los idiomas que aparecen en las fuentes y
+/// los que un usuario puede querer poner por delante.
+const Map<String, String> kLanguageCatalog = {
+  kLanguageSpanishLatin: 'Español (Latino)',
+  kLanguageSpanish: 'Español',
+  kLanguageEnglish: 'Inglés',
+  'pt': 'Portugués',
+  'fr': 'Francés',
+  'it': 'Italiano',
+  'de': 'Alemán',
+  'ru': 'Ruso',
+  'ja': 'Japonés',
+  'ko': 'Coreano',
+  'zh': 'Chino',
+  'ar': 'Árabe',
+};
+
+/// Etiqueta legible de un código (`es-419` → `Español (Latino)`).
+///
+/// Un idioma fuera del catálogo se muestra con su código en mayúsculas: es
+/// preferible un `DE` a inventar un nombre a medias.
+String languageLabel(String? code) {
+  final normalized = normalizeLanguageCode(code);
+  if (normalized == null) return '';
+  return kLanguageCatalog[normalized] ?? normalized.toUpperCase();
+}
+
+/// Etiqueta corta para los badges del selector (`es-419` → `LAT`).
+String languageBadge(String? code) {
+  final normalized = normalizeLanguageCode(code);
+  if (normalized == null) return '';
+  return _languageBadges[normalized] ?? normalized.toUpperCase();
+}
+
+const Map<String, String> _languageBadges = {
+  kLanguageSpanishLatin: 'LAT',
+  kLanguageSpanish: 'ESP',
+  kLanguageEnglish: 'ENG',
+  'pt': 'POR',
+  'fr': 'FRA',
+  'it': 'ITA',
+  'de': 'ALE',
+  'ru': 'RUS',
+  'ja': 'JAP',
+  'ko': 'COR',
+  'zh': 'CHI',
+  'ar': 'ARA',
+};
+
 /// Orden de idiomas preferido para audio y para subtítulos.
 ///
 /// El orden es la prioridad: el índice 0 es el idioma favorito.

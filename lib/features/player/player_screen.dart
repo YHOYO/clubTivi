@@ -15,7 +15,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/datasources/local/database.dart' as db;
 import '../../data/services/channel_probe_service.dart';
+import '../../data/services/language_preferences_store.dart';
 import '../../data/services/stream_alternatives_service.dart';
+import '../../data/services/track_selector.dart';
 import '../../features/providers/provider_manager.dart' show databaseProvider;
 import '../casting/cast_service.dart';
 import '../casting/cast_dialog.dart';
@@ -93,6 +95,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   StreamSubscription<String>? _playbackErrorSub;
   List<SubtitleTrack> _subtitleTracks = [];
   List<AudioTrack> _audioTracks = [];
+
+  /// Elecciones manuales de esta reproducción; ganan a las preferencias.
+  ManualTrackChoice _manualTracks = ManualTrackChoice.none;
+
+  /// Sube con cada reproducción: fuerza una decisión nueva aunque la lista de
+  /// pistas tenga los mismos ids que la anterior (dos canales pueden numerar
+  /// sus pistas igual).
+  int _trackDecisionGeneration = 0;
+
+  /// Firma de las pistas ya decididas, para no volver a decidir en cada
+  /// emisión ni aplicar la elección a la lista vieja cuando mpv todavía no
+  /// publicó la del stream nuevo.
+  String? _decidedTracks;
 
   // Comprobación previa del canal: si el servidor contesta 403 o no contesta,
   // conviene decirlo mientras arranca en vez de dejar «Buffering» veinte
@@ -218,6 +233,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     final playerService = ref.read(playerServiceProvider);
     final urls = [widget.streamUrl, ...widget.alternativeUrls];
 
+    _resetTrackSelection();
     _preflight = null;
     _preflightWarned = false;
     _playbackRequestedAt = DateTime.now();
@@ -313,6 +329,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   void _switchToNextStream() {
     setState(() => _currentUrlIndex++);
+    _resetTrackSelection();
     // El siguiente servidor es otro: hay que sondearlo de nuevo.
     _preflight = null;
     _preflightWarned = false;
@@ -347,27 +364,120 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     }
   }
 
+  /// Cada reproducción empieza sin elecciones manuales: el idioma configurado
+  /// vuelve a decidir hasta que el usuario toque una pista.
+  void _resetTrackSelection() {
+    _trackDecisionGeneration++;
+    _manualTracks = ManualTrackChoice.none;
+  }
+
   void _loadTrackInfo() {
     final player = ref.read(playerServiceProvider).player;
     final tracks = player.state.tracks;
+    final audioTracks = tracks.audio
+        .where((t) => t.id != 'auto' && t.id != 'no')
+        .toList();
+    final subtitleTracks = tracks.subtitle
+        .where((t) => t.id != 'auto' && t.id != 'no')
+        .toList();
+
+    var subtitlesEnabled = player.state.track.subtitle.id != 'no' &&
+        player.state.track.subtitle.id != 'auto';
+    final signature = _trackSignature(audioTracks, subtitleTracks);
+    if (signature.isNotEmpty && signature != _decidedTracks) {
+      _decidedTracks = signature;
+      final selection = _applyLanguageSelection(audioTracks, subtitleTracks);
+      // La orden a mpv es asíncrona: el estado de la UI se adelanta a
+      // propósito para no mostrar «subtítulos apagados» justo después de
+      // encenderlos.
+      if (selection.subtitles != null) subtitlesEnabled = true;
+    }
+
     setState(() {
-      _subtitleTracks = tracks.subtitle
-          .where((t) => t.id != 'auto' && t.id != 'no')
-          .toList();
-      _audioTracks = tracks.audio
-          .where((t) => t.id != 'auto' && t.id != 'no')
-          .toList();
-      _subtitlesEnabled = player.state.track.subtitle.id != 'no' &&
-          player.state.track.subtitle.id != 'auto';
+      _subtitleTracks = subtitleTracks;
+      _audioTracks = audioTracks;
+      _subtitlesEnabled = subtitlesEnabled;
     });
+  }
+
+  /// Identidad de la lista de pistas + reproducción actual.
+  String _trackSignature(
+    List<AudioTrack> audioTracks,
+    List<SubtitleTrack> subtitleTracks,
+  ) {
+    if (audioTracks.isEmpty && subtitleTracks.isEmpty) return '';
+    final audio = audioTracks.map((t) => t.id).join(',');
+    final subtitles = subtitleTracks.map((t) => t.id).join(',');
+    return '$_trackDecisionGeneration|$audio|$subtitles';
+  }
+
+  /// Aplica las preferencias de idioma a las pistas que acaban de llegar.
+  ///
+  /// Solo decide dónde hay coincidencia: si la fuente no ofrece el idioma
+  /// pedido, no se toca ninguna pista.
+  TrackSelection _applyLanguageSelection(
+    List<AudioTrack> audioTracks,
+    List<SubtitleTrack> subtitleTracks,
+  ) {
+    final selection = selectTracks(
+      audioTracks: [
+        for (final track in audioTracks)
+          SelectableTrack(
+            id: track.id,
+            language: track.language,
+            title: track.title,
+          ),
+      ],
+      subtitleTracks: [
+        for (final track in subtitleTracks)
+          SelectableTrack(
+            id: track.id,
+            language: track.language,
+            title: track.title,
+          ),
+      ],
+      preferences: ref.read(languagePreferencesProvider),
+      manual: _manualTracks,
+    );
+    if (selection.isEmpty) return selection;
+
+    final player = ref.read(playerServiceProvider).player;
+    final audioId = selection.audio?.id;
+    if (audioId != null) {
+      for (final track in audioTracks) {
+        if (track.id == audioId) {
+          unawaited(player.setAudioTrack(track));
+          break;
+        }
+      }
+    }
+    final subtitleId = selection.subtitles?.id;
+    if (subtitleId != null) {
+      for (final track in subtitleTracks) {
+        if (track.id == subtitleId) {
+          unawaited(player.setSubtitleTrack(track));
+          break;
+        }
+      }
+    }
+    return selection;
   }
 
   void _toggleSubtitles() {
     final player = ref.read(playerServiceProvider).player;
     if (_subtitlesEnabled) {
+      _manualTracks = _manualTracks.copyWith(
+        subtitlesOff: true,
+        subtitlesLocked: true,
+      );
       player.setSubtitleTrack(SubtitleTrack.no());
       setState(() => _subtitlesEnabled = false);
     } else if (_subtitleTracks.isNotEmpty) {
+      _manualTracks = _manualTracks.copyWith(
+        subtitleId: _subtitleTracks.first.id,
+        subtitlesOff: false,
+        subtitlesLocked: true,
+      );
       player.setSubtitleTrack(_subtitleTracks.first);
       setState(() => _subtitlesEnabled = true);
     }
@@ -404,6 +514,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                 title: const Text('Off', style: TextStyle(color: Colors.white70, fontSize: 13)),
                 trailing: currentId == 'no' ? const Icon(Icons.check, color: Colors.greenAccent, size: 18) : null,
                 onTap: () {
+                  _manualTracks = _manualTracks.copyWith(
+                    subtitlesOff: true,
+                    subtitlesLocked: true,
+                  );
                   player.setSubtitleTrack(SubtitleTrack.no());
                   setState(() => _subtitlesEnabled = false);
                   Navigator.of(ctx).pop();
@@ -422,6 +536,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                       : null,
                   trailing: isActive ? const Icon(Icons.check, color: Colors.greenAccent, size: 18) : null,
                   onTap: () {
+                    _manualTracks = _manualTracks.copyWith(
+                      subtitleId: t.id,
+                      subtitlesOff: false,
+                      subtitlesLocked: true,
+                    );
                     player.setSubtitleTrack(t);
                     setState(() => _subtitlesEnabled = true);
                     Navigator.of(ctx).pop();
@@ -470,6 +589,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       if (path == null || !mounted) return;
 
       final name = path.split(RegExp(r'[\\/]')).last;
+      // Un archivo elegido a mano también gana: la elección automática no
+      // vuelve a encender los subtítulos incrustados por su cuenta.
+      _manualTracks = _manualTracks.copyWith(
+        subtitlesOff: false,
+        subtitlesLocked: true,
+      );
       ref.read(playerServiceProvider).player.setSubtitleTrack(
             SubtitleTrack.uri(path, title: name),
           );
@@ -525,6 +650,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                       : null,
                   trailing: isActive ? const Icon(Icons.check, color: Colors.greenAccent, size: 18) : null,
                   onTap: () {
+                    _manualTracks = _manualTracks.copyWith(audioId: t.id);
                     player.setAudioTrack(t);
                     Navigator.of(ctx).pop();
                   },
@@ -611,6 +737,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   void _switchChannel(int delta) {
     if (widget.channels.isEmpty) return;
+    _resetTrackSelection();
     setState(() {
       _channelIndex =
           (_channelIndex + delta) % widget.channels.length;
