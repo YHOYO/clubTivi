@@ -2,8 +2,11 @@ import 'package:logger/logger.dart';
 import '../datasources/remote/trakt_client.dart';
 import '../datasources/remote/tmdb_client.dart';
 import '../datasources/remote/debrid_service.dart';
+import '../datasources/remote/stremio_addon_client.dart';
 import '../datasources/remote/torrent_search_client.dart';
 import '../models/show.dart';
+import '../models/stremio_addon.dart';
+import '../models/stream_search_result.dart';
 import '../models/stream_source.dart';
 import '../services/debrid_settings.dart';
 
@@ -15,6 +18,11 @@ class ShowsRepository {
   /// Servicios habilitados en orden de prioridad. Vacío = modo sin debrid.
   final List<DebridService> _debridServices;
   final TorrentSearchClient _torrentSearch;
+
+  /// Addons Stremio habilitados, en orden de prioridad. Vacío = ruta actual
+  /// intacta: solo Torrentio.
+  final List<InstalledAddon> _stremioAddons;
+  final StremioAddonClient _stremioClient;
   final _log = Logger(printer: SimplePrinter());
 
   ShowsRepository({
@@ -22,18 +30,27 @@ class ShowsRepository {
     TmdbClient? tmdb,
     List<DebridService> debridServices = const [],
     TorrentSearchClient? torrentSearch,
+    List<InstalledAddon> stremioAddons = const [],
+    StremioAddonClient? stremioClient,
   })  : _trakt = trakt,
         _tmdb = tmdb,
         _debridServices = List<DebridService>.unmodifiable(debridServices),
-        _torrentSearch = torrentSearch ?? TorrentSearchClient();
+        _torrentSearch = torrentSearch ?? TorrentSearchClient(),
+        _stremioAddons = List<InstalledAddon>.unmodifiable(stremioAddons),
+        _stremioClient = stremioClient ?? StremioAddonClient();
 
   bool get hasTrakt => _trakt != null;
   bool get hasTmdb => _tmdb != null;
   bool get hasDebrid => _debridServices.isNotEmpty;
+  bool get hasStremioAddons => _stremioAddons.isNotEmpty;
 
   /// Nombres de los servicios que resolverán, en orden de prioridad.
   List<String> get debridServiceNames =>
       [for (final service in _debridServices) service.serviceName];
+
+  /// URLs de los addons que se consultarán, en orden de prioridad.
+  List<String> get stremioAddonUrls =>
+      [for (final addon in _stremioAddons) addon.url];
 
   /// Get trending shows, enriched with TMDB posters
   Future<List<Show>> getTrendingShows({int page = 1, int limit = 20}) async {
@@ -231,30 +248,41 @@ class ShowsRepository {
 
   /// Find sources for a show/movie as the app-wide [StreamSource] type.
   ///
-  /// Torrentio ya devuelve ese tipo; aquí solo se enriquece con la
-  /// disponibilidad del debrid habilitado y se marca el motivo cuando no hay
-  /// ninguno. El orden final lo decide `rankStreams` en la capa de providers,
+  /// Torrentio y los addons habilitados devuelven ese tipo; aquí se mezclan, se
+  /// enriquecen con la disponibilidad del debrid habilitado y se marca el motivo
+  /// cuando no hay ninguno. Los addons se consultan en paralelo y un addon caído
+  /// o lento solo se reporta como fallo con su motivo: nunca tumba ni bloquea a
+  /// los demás. El orden final lo decide `rankStreams` en la capa de providers,
   /// para que este repositorio no dependa de preferencias de UI.
-  Future<List<StreamSource>> resolveStreams({
+  Future<StreamSearchResult> resolveStreams({
     required String imdbId,
     int? season,
     int? episode,
   }) async {
-    // Step 1: Search for torrent hashes via Torrentio
-    final List<StreamSource> sources;
-    if (season != null && episode != null) {
-      sources = await _torrentSearch.searchEpisode(
-        imdbId,
-        season: season,
-        episode: episode,
-      );
-    } else {
-      sources = await _torrentSearch.searchMovie(imdbId);
+    final isEpisode = season != null && episode != null;
+
+    // Step 1: Torrentio y addons Stremio en paralelo.
+    final torrentFuture = isEpisode
+        ? _torrentSearch.searchEpisode(imdbId, season: season, episode: episode)
+        : _torrentSearch.searchMovie(imdbId);
+    final streamId = isEpisode ? '$imdbId:$season:$episode' : imdbId;
+    final streamType = isEpisode ? 'series' : 'movie';
+
+    final addonFutures = [
+      for (final addon in _stremioAddons)
+        _fetchFromAddon(addon, type: streamType, id: streamId),
+    ];
+
+    final sources = <StreamSource>[...await torrentFuture];
+    final failures = <StreamProviderFailure>[];
+    for (final result in await Future.wait(addonFutures)) {
+      sources.addAll(result.sources);
+      if (result.failure != null) failures.add(result.failure!);
     }
 
     if (sources.isEmpty) {
-      _log.w('No torrents found for $imdbId');
-      return [];
+      _log.w('No sources found for $imdbId');
+      return StreamSearchResult(failures: failures);
     }
 
     // Step 2: Check debrid instant availability. Se prueba en orden de
@@ -303,7 +331,45 @@ class ShowsRepository {
       results.add(enriched);
     }
 
-    return results;
+    return StreamSearchResult(sources: results, failures: failures);
+  }
+
+  /// Consulta un addon y traduce cualquier fallo a un motivo visible. El addon
+  /// caído queda fuera de la lista, pero los demás siguen respondiendo.
+  Future<({List<StreamSource> sources, StreamProviderFailure? failure})>
+      _fetchFromAddon(
+    InstalledAddon addon, {
+    required String type,
+    required String id,
+  }) async {
+    try {
+      final sources = await _stremioClient.fetchStreams(
+        addon: addon,
+        type: type,
+        id: id,
+      );
+      return (sources: sources, failure: null);
+    } on StremioAddonException catch (e) {
+      _log.w('Addon ${addon.name} failed: ${e.message}');
+      return (
+        sources: const <StreamSource>[],
+        failure: StreamProviderFailure(
+          providerId: addon.manifestId,
+          providerName: addon.name,
+          reason: e.message,
+        ),
+      );
+    } catch (e) {
+      _log.w('Addon ${addon.name} failed: $e');
+      return (
+        sources: const <StreamSource>[],
+        failure: StreamProviderFailure(
+          providerId: addon.manifestId,
+          providerName: addon.name,
+          reason: 'El addon no pudo responder',
+        ),
+      );
+    }
   }
 
   /// Resolve a specific torrent through the enabled debrid services, in

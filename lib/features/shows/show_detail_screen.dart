@@ -7,6 +7,7 @@ import 'package:palette_generator/palette_generator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../data/models/show.dart';
+import '../../data/models/stream_search_result.dart';
 import '../../data/models/stream_source.dart';
 import '../../data/services/debrid_settings.dart';
 import 'shows_providers.dart';
@@ -403,15 +404,15 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     }
     setState(() => _resolving = true);
     try {
-      final streams = await ref.read(
+      final result = await ref.read(
         resolveStreamProvider(StreamResolveParams(show.imdbId!)).future,
       );
-      if (streams.isEmpty) {
-        _showSnackbar('No streams found on Torrentio');
+      if (result.isEmpty) {
+        _showSnackbar(_noStreamsMessage(result));
         return;
       }
       if (!mounted) return;
-      _showStreamPicker(streams, show.title);
+      _showStreamPicker(result, show.title);
     } catch (e) {
       _showSnackbar('Stream error: $e');
     } finally {
@@ -426,19 +427,19 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     }
     setState(() => _resolving = true);
     try {
-      final streams = await ref.read(
+      final result = await ref.read(
         resolveStreamProvider(StreamResolveParams(
           show.imdbId!,
           season: episode.season,
           episode: episode.number,
         )).future,
       );
-      if (streams.isEmpty) {
-        _showSnackbar('No streams found for ${episode.code}');
+      if (result.isEmpty) {
+        _showSnackbar(_noStreamsMessage(result, 'for ${episode.code}'));
         return;
       }
       if (!mounted) return;
-      _showStreamPicker(streams, '${show.title} ${episode.code}');
+      _showStreamPicker(result, '${show.title} ${episode.code}');
     } catch (e) {
       _showSnackbar('Stream error: $e');
     } finally {
@@ -446,7 +447,18 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     }
   }
 
-  void _showStreamPicker(List<StreamSource> streams, String title) {
+  /// Sin fuentes, el aviso nombra al proveedor que falló en vez de culpar a
+  /// Torrentio cuando el que no respondió fue un addon.
+  String _noStreamsMessage(StreamSearchResult result, [String suffix = '']) {
+    if (result.hasFailures) {
+      final names = result.failures.map((f) => f.providerName).join(', ');
+      return 'No streams found$suffix — $names no respondió';
+    }
+    return 'No streams found$suffix';
+  }
+
+  void _showStreamPicker(StreamSearchResult result, String title) {
+    final streams = result.sources;
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1A1A2E),
@@ -498,6 +510,7 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
               ),
               if (streams.any((s) => !s.isAvailable))
                 _buildUnavailableNotice(ctx, streams),
+              if (result.hasFailures) _buildFailureNotice(ctx, result.failures),
               const SizedBox(height: 8),
               const Divider(color: Colors.white12, height: 1),
               Expanded(
@@ -584,6 +597,52 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// Un addon caído, lento o con basura queda fuera de la lista, pero se
+  /// explica aquí para que el usuario sepa que faltan fuentes y por qué.
+  Widget _buildFailureNotice(
+    BuildContext sheetContext,
+    List<StreamProviderFailure> failures,
+  ) {
+    final summary = failures
+        .map((f) => '${f.providerName}: ${f.reason}')
+        .join('\n');
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+      padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+      decoration: BoxDecoration(
+        color: Colors.redAccent.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.redAccent.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.cloud_off_rounded, color: Colors.redAccent, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              failures.length == 1
+                  ? 'Un addon no respondió\n$summary'
+                  : '${failures.length} addons no respondieron\n$summary',
+              style: const TextStyle(
+                color: Colors.redAccent,
+                fontSize: 12,
+                height: 1.3,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(sheetContext);
+              context.push('/stremio-addons');
+            },
+            child: const Text('Addons'),
+          ),
+        ],
       ),
     );
   }

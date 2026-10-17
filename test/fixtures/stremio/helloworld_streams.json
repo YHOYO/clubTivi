@@ -1,0 +1,40 @@
+{
+  "streams": [
+    {
+      "name": "The Wizard of Oz",
+      "type": "movie",
+      "infoHash": "24c8802e2624e17d46cd555f364debd949f2c81e",
+      "fileIdx": 0
+    },
+    {
+      "name": "Night of the Living Dead",
+      "type": "movie",
+      "infoHash": "a7cfbb7840a8b67fd735ac73a373302d14a7cdc9",
+      "sources": [
+        "tracker:udp://tracker.publicbt.com/announce",
+        "tracker:udp://glotorrents.pw:6969/announce",
+        "tracker:udp://tracker.openbittorrent.com:80/announce",
+        "dht:a7cfbb7840a8b67fd735ac73a373302d14a7cdc9"
+      ],
+      "tag": [
+        "1080p"
+      ],
+      "title": "1080p"
+    },
+    {
+      "name": "Big Buck Bunny",
+      "type": "movie",
+      "url": "http://clips.vorwaerts-gmbh.de/big_buck_bunny.mp4"
+    },
+    {
+      "name": "The Arizona Kid",
+      "type": "movie",
+      "ytId": "m3BKVSpP80s"
+    },
+    {
+      "name": "Fight Club",
+      "type": "movie",
+      "externalUrl": "https://www.netflix.com/watch/26004747"
+    }
+  ]
+}

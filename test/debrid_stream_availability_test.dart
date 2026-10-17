@@ -117,9 +117,14 @@ void main() {
     );
   }
 
+  /// Solo interesan las fuentes: los fallos de proveedor tienen sus propias
+  /// pruebas en `stremio_addon_resolution_test.dart`.
+  Future<List<StreamSource>> sourcesOf(ShowsRepository repo) async =>
+      (await repo.resolveStreams(imdbId: 'tt1234567')).sources;
+
   test('sin debrid los torrents se listan como no disponibles con motivo',
       () async {
-    final streams = await repository().resolveStreams(imdbId: 'tt1234567');
+    final streams = await sourcesOf(repository());
 
     expect(streams, hasLength(1));
     final source = streams.single;
@@ -132,8 +137,7 @@ void main() {
   });
 
   test('con debrid habilitado los torrents quedan disponibles', () async {
-    final streams = await repository(debrid: [_FakeDebrid()])
-        .resolveStreams(imdbId: 'tt1234567');
+    final streams = await sourcesOf(repository(debrid: [_FakeDebrid()]));
 
     expect(streams.single.isAvailable, isTrue);
     expect(streams.single.unavailableReason, isNull);
@@ -141,9 +145,9 @@ void main() {
 
   test('marca como cacheados los hashes del servicio en orden de prioridad',
       () async {
-    final streams = await repository(debrid: [
+    final streams = await sourcesOf(repository(debrid: [
       _FakeDebrid(name: 'Second', cached: {_infoHash.toLowerCase()}),
-    ]).resolveStreams(imdbId: 'tt1234567');
+    ]));
 
     final source = streams.single;
     expect(source.isCached, isTrue);
@@ -155,10 +159,10 @@ void main() {
   });
 
   test('si el primer servicio falla al consultar, sigue disponible', () async {
-    final streams = await repository(debrid: [
+    final streams = await sourcesOf(repository(debrid: [
       _FakeDebrid(name: 'Broken', failAvailability: true),
       _FakeDebrid(name: 'Healthy'),
-    ]).resolveStreams(imdbId: 'tt1234567');
+    ]));
 
     expect(streams.single.isAvailable, isTrue);
   });
