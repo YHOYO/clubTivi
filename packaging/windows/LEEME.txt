@@ -1,0 +1,55 @@
+clubTivi @@VERSION@@ — versión portable para Windows (64 bits)
+=========================================================
+Compilada el @@FECHA@@. Esta carpeta es la aplicación ya lista: no hay que
+instalar nada ni hace falta ser administrador.
+
+CÓMO ABRIRLA
+  1. Doble clic en clubtivi.exe.
+  2. (Opcional) Doble clic en "Crear acceso directo.bat" para tener en el
+     escritorio un acceso directo con el icono de la aplicación. Si prefieres
+     el menú Inicio, copia ese mismo acceso directo a:
+       %APPDATA%\Microsoft\Windows\Start Menu\Programs
+
+LO QUE NECESITA
+  - Windows 10/11 de 64 bits.
+  - Conexión a internet para cargar tus listas y la guía de programación.
+  - ffmpeg es OPCIONAL: solo se usa si un canal tiene que pasar por el proxy
+    (streams con cabeceras especiales o formatos que el reproductor no abre
+    solo). Si tienes ffmpeg en el PATH, la aplicación lo encuentra sola.
+
+DÓNDE GUARDA TUS DATOS
+  Fuera de esta carpeta, en %APPDATA%\clubtivi: la base de datos de canales,
+  la guía, tus preferencias y el último resultado de la comprobación de
+  canales. Para empezar de cero, cierra la aplicación y borra esa carpeta.
+  Así puedes actualizar la aplicación sustituyendo estos ficheros sin perder
+  nada.
+
+CÓMO MOVERLA A OTRO PC O A UN PENDRIVE
+  Copia la carpeta ENTERA. El .exe por sí solo no arranca: necesita las DLL que
+  tiene al lado (el reproductor mpv, sqlite, flutter) y la subcarpeta data.
+
+QUÉ HACE
+  - Listas M3U (fichero local o URL) y proveedores Xtream.
+  - Guía de programación (XMLTV) con mapeo automático de canales.
+  - Comprobación de canales: dice cuáles responden de verdad antes de abrirlos,
+    sin salir de la lista y sin abrir el reproductor.
+  - Reproductor integrado (mpv) con failover entre streams alternativos.
+
+CONTENIDO
+  clubtivi.exe ..................... la aplicación
+  data\ ............................ código compilado y recursos de Flutter
+  libmpv-2.dll ..................... reproductor de vídeo
+  sqlite3.dll ...................... base de datos
+  Crear acceso directo.bat ......... crea el acceso directo del escritorio
+  LEEME.txt ........................ este fichero
+
+  El zip que contiene esta carpeta viene con su SHA-256 en SHA256SUMS.txt, en
+  la misma carpeta donde lo descargaste (o el que publica la release).
+
+SIN FIRMA DIGITAL
+  El ejecutable no está firmado con un certificado de código, así que Windows
+  SmartScreen puede pedir confirmación la primera vez ("Más información" →
+  "Ejecutar de todas formas"). Es normal en programas sin firmar.
+
+  Empaquetado con tools/package_windows.ps1, el mismo script que usa la
+  integración continua para publicar la release.

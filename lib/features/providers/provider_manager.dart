@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,6 +10,7 @@ import '../../data/datasources/local/database.dart' as db;
 import '../../data/datasources/parsers/m3u_parser.dart';
 import '../../data/datasources/remote/xtream_client.dart';
 import '../../data/models/channel.dart' hide Provider;
+import '../../data/services/epg_refresh_service.dart';
 import '../../data/services/logo_resolver_service.dart';
 import '../../core/feature_gate.dart';
 import 'package:dio/dio.dart';
@@ -68,7 +73,9 @@ class ProviderManager {
 
     List<Channel> channels;
     if (provider.type == 'm3u') {
-      channels = await _refreshM3u(provider);
+      final result = await _refreshM3u(provider);
+      channels = result.channels;
+      await _registerPlaylistEpgSource(provider, result.urlTvg);
     } else if (provider.type == 'xtream') {
       channels = await _refreshXtream(provider);
     } else {
@@ -87,6 +94,8 @@ class ProviderManager {
       channelNumber: Value(c.channelNumber),
       streamUrl: c.streamUrl,
       streamType: Value(c.streamType.name),
+      httpHeaders: Value(Channel.encodeHttpHeaders(c.httpHeaders)),
+      hidden: Value(c.hidden),
     )).toList());
 
     // Resolve missing logos in background
@@ -95,12 +104,130 @@ class ProviderManager {
     return channels.length;
   }
 
-  Future<List<Channel>> _refreshM3u(db.Provider provider) async {
+  Future<M3uResult> _refreshM3u(db.Provider provider) async {
+    final source = provider.url!;
+    final content = isLocalPlaylistPath(source)
+        ? await _readLocalPlaylist(source)
+        : await _downloadPlaylist(source);
+    return _m3uParser.parse(content, providerId: provider.id);
+  }
+
+  /// Guide sources for the playlists already in the database.
+  ///
+  /// Providers added before this existed never registered their guide, and the
+  /// grid stayed empty until the channel list was refreshed. This reads only
+  /// the header of each playlist (a few KB), so it is cheap at startup.
+  Future<int> registerPlaylistEpgSources() async {
+    final providers = await _db.getAllProviders();
+    var added = 0;
+    for (final provider in providers) {
+      final source = provider.url;
+      if (provider.type != 'm3u' || source == null || source.isEmpty) continue;
+      try {
+        final header = await _readPlaylistHeader(source);
+        final urlTvg = M3uParser.urlTvgFromHeader(header);
+        if (await _registerPlaylistEpgSource(provider, urlTvg, refresh: false)) {
+          added++;
+        }
+      } catch (e) {
+        debugPrint('[EPG] Could not read the header of ${provider.name}: $e');
+      }
+    }
+    return added;
+  }
+
+  /// First few kilobytes of a playlist: enough for the `#EXTM3U` header, where
+  /// the guide URL lives.
+  Future<String> _readPlaylistHeader(String source) async {
+    if (isLocalPlaylistPath(source)) {
+      final content = await _readLocalPlaylist(source);
+      return content.length > 8192 ? content.substring(0, 8192) : content;
+    }
+    final response = await Dio(BaseOptions(
+      validateStatus: (_) => true,
+      followRedirects: true,
+    )).get<String>(
+      source,
+      options: Options(
+        responseType: ResponseType.plain,
+        headers: {'Range': 'bytes=0-8191'},
+        receiveTimeout: const Duration(seconds: 10),
+      ),
+    );
+    return response.data ?? '';
+  }
+
+  /// Register the XMLTV feed a playlist announces in its `#EXTM3U` header.
+  ///
+  /// Playlists like TDTChannels ship their own guide in `url-tvg`; without this
+  /// the grid stays empty and looks broken until the source is added by hand.
+  Future<bool> _registerPlaylistEpgSource(
+    db.Provider provider,
+    String? urlTvg, {
+    bool refresh = true,
+  }) async {
+    if (urlTvg == null || urlTvg.trim().isEmpty) return false;
+    final sourceId = '${provider.id}-playlist-epg';
+
+    final sources = await _db.getAllEpgSources();
+    final current = sources.where((s) => s.id == sourceId).firstOrNull;
+    if (current != null && current.url == urlTvg) return false;
+
+    await _db.upsertEpgSource(db.EpgSourcesCompanion.insert(
+      id: sourceId,
+      name: '${provider.name} (guide from playlist)',
+      url: urlTvg.trim(),
+    ));
+
+    // A guide can be tens of megabytes: fetch it in the background so adding a
+    // provider never waits for the listings.
+    if (refresh) {
+      unawaited(EpgRefreshService(_db).refreshSource(sourceId).then((_) {
+        debugPrint('[EPG] Playlist guide loaded: $urlTvg');
+      }).catchError((Object e) {
+        debugPrint('[EPG] Could not load $urlTvg: $e');
+      }));
+    }
+    return true;
+  }
+
+  /// Whether a provider URL points at a file on this machine rather than a server.
+  ///
+  /// Local playlists are stored as `file://` URIs, but a plain Windows or Unix
+  /// path is accepted too so a path pasted into the dialog just works.
+  static bool isLocalPlaylistPath(String url) {
+    if (url.startsWith('file://')) return true;
+    if (url.startsWith('http://') || url.startsWith('https://')) return false;
+    return File(url).existsSync();
+  }
+
+  /// Turn a stored local playlist URL into a path.
+  static String localPlaylistPath(String url) =>
+      url.startsWith('file://') ? File.fromUri(Uri.parse(url)).path : url;
+
+  /// Render a local path as the `file://` URI the provider URL column holds.
+  static String toPlaylistUri(String path) => Uri.file(path).toString();
+
+  Future<String> _readLocalPlaylist(String url) async {
+    final file = File(localPlaylistPath(url));
+    if (!await file.exists()) {
+      throw FileSystemException('Playlist file not found', file.path);
+    }
+    final bytes = await file.readAsBytes();
+    // Playlists are usually UTF-8, but plenty of them are still Latin-1; a
+    // wrong guess would turn every accented channel name into mojibake.
+    try {
+      return utf8.decode(bytes);
+    } on FormatException {
+      return latin1.decode(bytes);
+    }
+  }
+
+  Future<String> _downloadPlaylist(String url) async {
     final dio = Dio();
     try {
-      final response = await dio.get<String>(provider.url!);
-      final result = _m3uParser.parse(response.data!, providerId: provider.id);
-      return result.channels;
+      final response = await dio.get<String>(url);
+      return response.data ?? '';
     } finally {
       dio.close();
     }
@@ -121,6 +248,16 @@ class ProviderManager {
 
   Future<void> deleteProvider(String id) async {
     await _db.deleteProvider(id);
+  }
+
+  /// Limpia los canales que quedaron de versiones anteriores, cuando borrar un
+  /// proveedor solo borraba su fila y dejaba los canales sueltos.
+  Future<int> purgeOrphanChannels() async {
+    final removed = await _db.purgeOrphanChannels();
+    if (removed > 0) {
+      debugPrint('[Providers] Removed $removed orphan channels');
+    }
+    return removed;
   }
 
   /// Resolve missing logos in background after provider refresh.

@@ -20,6 +20,8 @@ const _backupPrefKeys = [
   'shows_favorites',
   'last_group',
   'last_channel_id',
+  'channel_history',
+  'resume_last_channel',
   'failover_enabled',
 ];
 

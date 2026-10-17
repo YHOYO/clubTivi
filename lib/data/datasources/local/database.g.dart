@@ -722,6 +722,17 @@ class $ChannelsTable extends Channels with TableInfo<$ChannelsTable, Channel> {
     requiredDuringInsert: false,
     defaultValue: const Constant('live'),
   );
+  static const VerificationMeta _httpHeadersMeta = const VerificationMeta(
+    'httpHeaders',
+  );
+  @override
+  late final GeneratedColumn<String> httpHeaders = GeneratedColumn<String>(
+    'http_headers',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _favoriteMeta = const VerificationMeta(
     'favorite',
   );
@@ -774,6 +785,7 @@ class $ChannelsTable extends Channels with TableInfo<$ChannelsTable, Channel> {
     channelNumber,
     streamUrl,
     streamType,
+    httpHeaders,
     favorite,
     hidden,
     sortOrder,
@@ -858,6 +870,15 @@ class $ChannelsTable extends Channels with TableInfo<$ChannelsTable, Channel> {
         streamType.isAcceptableOrUnknown(data['stream_type']!, _streamTypeMeta),
       );
     }
+    if (data.containsKey('http_headers')) {
+      context.handle(
+        _httpHeadersMeta,
+        httpHeaders.isAcceptableOrUnknown(
+          data['http_headers']!,
+          _httpHeadersMeta,
+        ),
+      );
+    }
     if (data.containsKey('favorite')) {
       context.handle(
         _favoriteMeta,
@@ -925,6 +946,10 @@ class $ChannelsTable extends Channels with TableInfo<$ChannelsTable, Channel> {
         DriftSqlType.string,
         data['${effectivePrefix}stream_type'],
       )!,
+      httpHeaders: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}http_headers'],
+      ),
       favorite: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}favorite'],
@@ -957,6 +982,7 @@ class Channel extends DataClass implements Insertable<Channel> {
   final int? channelNumber;
   final String streamUrl;
   final String streamType;
+  final String? httpHeaders;
   final bool favorite;
   final bool hidden;
   final int sortOrder;
@@ -971,6 +997,7 @@ class Channel extends DataClass implements Insertable<Channel> {
     this.channelNumber,
     required this.streamUrl,
     required this.streamType,
+    this.httpHeaders,
     required this.favorite,
     required this.hidden,
     required this.sortOrder,
@@ -998,6 +1025,9 @@ class Channel extends DataClass implements Insertable<Channel> {
     }
     map['stream_url'] = Variable<String>(streamUrl);
     map['stream_type'] = Variable<String>(streamType);
+    if (!nullToAbsent || httpHeaders != null) {
+      map['http_headers'] = Variable<String>(httpHeaders);
+    }
     map['favorite'] = Variable<bool>(favorite);
     map['hidden'] = Variable<bool>(hidden);
     map['sort_order'] = Variable<int>(sortOrder);
@@ -1026,6 +1056,9 @@ class Channel extends DataClass implements Insertable<Channel> {
           : Value(channelNumber),
       streamUrl: Value(streamUrl),
       streamType: Value(streamType),
+      httpHeaders: httpHeaders == null && nullToAbsent
+          ? const Value.absent()
+          : Value(httpHeaders),
       favorite: Value(favorite),
       hidden: Value(hidden),
       sortOrder: Value(sortOrder),
@@ -1048,6 +1081,7 @@ class Channel extends DataClass implements Insertable<Channel> {
       channelNumber: serializer.fromJson<int?>(json['channelNumber']),
       streamUrl: serializer.fromJson<String>(json['streamUrl']),
       streamType: serializer.fromJson<String>(json['streamType']),
+      httpHeaders: serializer.fromJson<String?>(json['httpHeaders']),
       favorite: serializer.fromJson<bool>(json['favorite']),
       hidden: serializer.fromJson<bool>(json['hidden']),
       sortOrder: serializer.fromJson<int>(json['sortOrder']),
@@ -1067,6 +1101,7 @@ class Channel extends DataClass implements Insertable<Channel> {
       'channelNumber': serializer.toJson<int?>(channelNumber),
       'streamUrl': serializer.toJson<String>(streamUrl),
       'streamType': serializer.toJson<String>(streamType),
+      'httpHeaders': serializer.toJson<String?>(httpHeaders),
       'favorite': serializer.toJson<bool>(favorite),
       'hidden': serializer.toJson<bool>(hidden),
       'sortOrder': serializer.toJson<int>(sortOrder),
@@ -1084,6 +1119,7 @@ class Channel extends DataClass implements Insertable<Channel> {
     Value<int?> channelNumber = const Value.absent(),
     String? streamUrl,
     String? streamType,
+    Value<String?> httpHeaders = const Value.absent(),
     bool? favorite,
     bool? hidden,
     int? sortOrder,
@@ -1100,6 +1136,7 @@ class Channel extends DataClass implements Insertable<Channel> {
         : this.channelNumber,
     streamUrl: streamUrl ?? this.streamUrl,
     streamType: streamType ?? this.streamType,
+    httpHeaders: httpHeaders.present ? httpHeaders.value : this.httpHeaders,
     favorite: favorite ?? this.favorite,
     hidden: hidden ?? this.hidden,
     sortOrder: sortOrder ?? this.sortOrder,
@@ -1124,6 +1161,9 @@ class Channel extends DataClass implements Insertable<Channel> {
       streamType: data.streamType.present
           ? data.streamType.value
           : this.streamType,
+      httpHeaders: data.httpHeaders.present
+          ? data.httpHeaders.value
+          : this.httpHeaders,
       favorite: data.favorite.present ? data.favorite.value : this.favorite,
       hidden: data.hidden.present ? data.hidden.value : this.hidden,
       sortOrder: data.sortOrder.present ? data.sortOrder.value : this.sortOrder,
@@ -1143,6 +1183,7 @@ class Channel extends DataClass implements Insertable<Channel> {
           ..write('channelNumber: $channelNumber, ')
           ..write('streamUrl: $streamUrl, ')
           ..write('streamType: $streamType, ')
+          ..write('httpHeaders: $httpHeaders, ')
           ..write('favorite: $favorite, ')
           ..write('hidden: $hidden, ')
           ..write('sortOrder: $sortOrder')
@@ -1162,6 +1203,7 @@ class Channel extends DataClass implements Insertable<Channel> {
     channelNumber,
     streamUrl,
     streamType,
+    httpHeaders,
     favorite,
     hidden,
     sortOrder,
@@ -1180,6 +1222,7 @@ class Channel extends DataClass implements Insertable<Channel> {
           other.channelNumber == this.channelNumber &&
           other.streamUrl == this.streamUrl &&
           other.streamType == this.streamType &&
+          other.httpHeaders == this.httpHeaders &&
           other.favorite == this.favorite &&
           other.hidden == this.hidden &&
           other.sortOrder == this.sortOrder);
@@ -1196,6 +1239,7 @@ class ChannelsCompanion extends UpdateCompanion<Channel> {
   final Value<int?> channelNumber;
   final Value<String> streamUrl;
   final Value<String> streamType;
+  final Value<String?> httpHeaders;
   final Value<bool> favorite;
   final Value<bool> hidden;
   final Value<int> sortOrder;
@@ -1211,6 +1255,7 @@ class ChannelsCompanion extends UpdateCompanion<Channel> {
     this.channelNumber = const Value.absent(),
     this.streamUrl = const Value.absent(),
     this.streamType = const Value.absent(),
+    this.httpHeaders = const Value.absent(),
     this.favorite = const Value.absent(),
     this.hidden = const Value.absent(),
     this.sortOrder = const Value.absent(),
@@ -1227,6 +1272,7 @@ class ChannelsCompanion extends UpdateCompanion<Channel> {
     this.channelNumber = const Value.absent(),
     required String streamUrl,
     this.streamType = const Value.absent(),
+    this.httpHeaders = const Value.absent(),
     this.favorite = const Value.absent(),
     this.hidden = const Value.absent(),
     this.sortOrder = const Value.absent(),
@@ -1246,6 +1292,7 @@ class ChannelsCompanion extends UpdateCompanion<Channel> {
     Expression<int>? channelNumber,
     Expression<String>? streamUrl,
     Expression<String>? streamType,
+    Expression<String>? httpHeaders,
     Expression<bool>? favorite,
     Expression<bool>? hidden,
     Expression<int>? sortOrder,
@@ -1262,6 +1309,7 @@ class ChannelsCompanion extends UpdateCompanion<Channel> {
       if (channelNumber != null) 'channel_number': channelNumber,
       if (streamUrl != null) 'stream_url': streamUrl,
       if (streamType != null) 'stream_type': streamType,
+      if (httpHeaders != null) 'http_headers': httpHeaders,
       if (favorite != null) 'favorite': favorite,
       if (hidden != null) 'hidden': hidden,
       if (sortOrder != null) 'sort_order': sortOrder,
@@ -1280,6 +1328,7 @@ class ChannelsCompanion extends UpdateCompanion<Channel> {
     Value<int?>? channelNumber,
     Value<String>? streamUrl,
     Value<String>? streamType,
+    Value<String?>? httpHeaders,
     Value<bool>? favorite,
     Value<bool>? hidden,
     Value<int>? sortOrder,
@@ -1296,6 +1345,7 @@ class ChannelsCompanion extends UpdateCompanion<Channel> {
       channelNumber: channelNumber ?? this.channelNumber,
       streamUrl: streamUrl ?? this.streamUrl,
       streamType: streamType ?? this.streamType,
+      httpHeaders: httpHeaders ?? this.httpHeaders,
       favorite: favorite ?? this.favorite,
       hidden: hidden ?? this.hidden,
       sortOrder: sortOrder ?? this.sortOrder,
@@ -1336,6 +1386,9 @@ class ChannelsCompanion extends UpdateCompanion<Channel> {
     if (streamType.present) {
       map['stream_type'] = Variable<String>(streamType.value);
     }
+    if (httpHeaders.present) {
+      map['http_headers'] = Variable<String>(httpHeaders.value);
+    }
     if (favorite.present) {
       map['favorite'] = Variable<bool>(favorite.value);
     }
@@ -1364,6 +1417,7 @@ class ChannelsCompanion extends UpdateCompanion<Channel> {
           ..write('channelNumber: $channelNumber, ')
           ..write('streamUrl: $streamUrl, ')
           ..write('streamType: $streamType, ')
+          ..write('httpHeaders: $httpHeaders, ')
           ..write('favorite: $favorite, ')
           ..write('hidden: $hidden, ')
           ..write('sortOrder: $sortOrder, ')
@@ -6459,6 +6513,7 @@ typedef $$ChannelsTableCreateCompanionBuilder =
       Value<int?> channelNumber,
       required String streamUrl,
       Value<String> streamType,
+      Value<String?> httpHeaders,
       Value<bool> favorite,
       Value<bool> hidden,
       Value<int> sortOrder,
@@ -6476,6 +6531,7 @@ typedef $$ChannelsTableUpdateCompanionBuilder =
       Value<int?> channelNumber,
       Value<String> streamUrl,
       Value<String> streamType,
+      Value<String?> httpHeaders,
       Value<bool> favorite,
       Value<bool> hidden,
       Value<int> sortOrder,
@@ -6631,6 +6687,11 @@ class $$ChannelsTableFilterComposer
 
   ColumnFilters<String> get streamType => $composableBuilder(
     column: $table.streamType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get httpHeaders => $composableBuilder(
+    column: $table.httpHeaders,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -6803,6 +6864,11 @@ class $$ChannelsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get httpHeaders => $composableBuilder(
+    column: $table.httpHeaders,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get favorite => $composableBuilder(
     column: $table.favorite,
     builder: (column) => ColumnOrderings(column),
@@ -6881,6 +6947,11 @@ class $$ChannelsTableAnnotationComposer
 
   GeneratedColumn<String> get streamType => $composableBuilder(
     column: $table.streamType,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get httpHeaders => $composableBuilder(
+    column: $table.httpHeaders,
     builder: (column) => column,
   );
 
@@ -7037,6 +7108,7 @@ class $$ChannelsTableTableManager
                 Value<int?> channelNumber = const Value.absent(),
                 Value<String> streamUrl = const Value.absent(),
                 Value<String> streamType = const Value.absent(),
+                Value<String?> httpHeaders = const Value.absent(),
                 Value<bool> favorite = const Value.absent(),
                 Value<bool> hidden = const Value.absent(),
                 Value<int> sortOrder = const Value.absent(),
@@ -7052,6 +7124,7 @@ class $$ChannelsTableTableManager
                 channelNumber: channelNumber,
                 streamUrl: streamUrl,
                 streamType: streamType,
+                httpHeaders: httpHeaders,
                 favorite: favorite,
                 hidden: hidden,
                 sortOrder: sortOrder,
@@ -7069,6 +7142,7 @@ class $$ChannelsTableTableManager
                 Value<int?> channelNumber = const Value.absent(),
                 required String streamUrl,
                 Value<String> streamType = const Value.absent(),
+                Value<String?> httpHeaders = const Value.absent(),
                 Value<bool> favorite = const Value.absent(),
                 Value<bool> hidden = const Value.absent(),
                 Value<int> sortOrder = const Value.absent(),
@@ -7084,6 +7158,7 @@ class $$ChannelsTableTableManager
                 channelNumber: channelNumber,
                 streamUrl: streamUrl,
                 streamType: streamType,
+                httpHeaders: httpHeaders,
                 favorite: favorite,
                 hidden: hidden,
                 sortOrder: sortOrder,

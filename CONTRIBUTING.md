@@ -165,6 +165,36 @@ flutter test integration_test/
 
 ---
 
+## 🚀 Publishing a Release
+
+Versions are published with one command — there is no need to edit the version by hand or to create the tag manually:
+
+```bat
+Publicar release.bat          # double-click friendly: asks patch / minor / major
+```
+
+```powershell
+pwsh -File tools/release.ps1                 # patch bump, asks for confirmation
+pwsh -File tools/release.ps1 -Bump minor -Yes
+pwsh -File tools/release.ps1 -Version 1.0.0-rc1 -DryRun
+pwsh -File tools/release.ps1 -NoPush         # commit and tag locally, push later
+```
+
+The assistant bumps the version, runs `flutter test`, commits, creates the annotated tag `vX.Y.Z` and pushes both the branch and the tag. It refuses to run on a dirty working tree, on a detached HEAD, or when the tag already exists. `-DryRun` prints the plan without touching anything.
+
+Version bumps are always **two** edits, and the assistant does both in one commit:
+
+| Where | Why |
+| --- | --- |
+| `pubspec.yaml` → `version: X.Y.Z+N` | The build number, and the version the CI packages into the ZIP/DMG/APK |
+| `lib/data/services/app_update_service.dart` → `_currentVersion` | What the app shows and compares against the published tag when checking for updates |
+
+Never bump one without the other: the update banner reads `_currentVersion`, so a stale value means the app claims to be up to date forever. `test/version_consistency_test.dart` fails if the two ever drift apart.
+
+Pushing the tag is what builds the release: `.github/workflows/release.yml` calls the reusable build workflow, which compiles every platform and attaches the assets plus a `SHA256SUMS.txt` manifest to the GitHub release. To package only the Windows portable ZIP locally, use `Compilar y empaquetar.bat` (or `tools/package_windows.ps1`); it is the same script the CI runs.
+
+---
+
 ## 📄 License
 
 By contributing, you agree that your contributions will be licensed under the Apache License 2.0.

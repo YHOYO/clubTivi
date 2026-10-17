@@ -1,0 +1,31 @@
+# Publica la release al empujar un tag de versión (v0.4.0, v1.0.0-rc1...).
+#
+# Aquí no se compila nada: se llama al workflow reutilizable que arma todas las
+# plataformas. En Windows ese workflow usa tools/package_windows.ps1, el mismo
+# script que ejecuta en local "Compilar y empaquetar.bat", así que el zip de la
+# release y el de casa salen del mismo sitio. El job de release añade además un
+# SHA256SUMS.txt con el hash de cada fichero adjunto.
+#
+# Lanzarlo a mano con un tag concreto:
+#   gh workflow run "Release (tag)" --ref v0.5.0   (el tag debe existir)
+name: Release (tag)
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    uses: ./.github/workflows/build.yml
+    permissions:
+      contents: write
+    with:
+      release_tag: ${{ github.ref_name }}
+      release_name: clubTivi ${{ github.ref_name }}
+      # Un tag con sufijo (v1.0.0-rc1) se publica como pre-release.
+      prerelease: ${{ contains(github.ref_name, '-') }}

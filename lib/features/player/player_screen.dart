@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
 
+import 'package:collection/collection.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +14,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/datasources/local/database.dart' as db;
+import '../../data/services/channel_probe_service.dart';
 import '../../data/services/stream_alternatives_service.dart';
 import '../../features/providers/provider_manager.dart' show databaseProvider;
 import '../casting/cast_service.dart';
@@ -77,8 +80,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   // Track selection state
   bool _subtitlesEnabled = false;
+  StreamSubscription<String>? _playbackErrorSub;
   List<SubtitleTrack> _subtitleTracks = [];
   List<AudioTrack> _audioTracks = [];
+
+  // Comprobación previa del canal: si el servidor contesta 403 o no contesta,
+  // conviene decirlo mientras arranca en vez de dejar «Buffering» veinte
+  // segundos. El sondeo corre en paralelo y nunca bloquea la reproducción.
+  ProbeResult? _preflight;
+  bool _preflightWarned = false;
+  DateTime? _playbackRequestedAt;
 
   @override
   void initState() {
@@ -92,6 +103,26 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       _providerName = ref.read(streamAlternativesProvider).providerName(ch['providerId']?.toString() ?? '');
     }
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    // Aviso cuando el canal no arranca (403, DNS…): mejor un mensaje que una
+    // pantalla en negro con «Buffering» indefinido.
+    _playbackErrorSub =
+        ref.read(playerServiceProvider).errors.listen((message) {
+      if (!mounted) return;
+      // Si el sondeo previo ya sabe qué contesta el servidor, el mensaje dice
+      // por qué falla en vez de dejar solo el error del reproductor.
+      final probe = _preflight;
+      final explanation = probe != null && !probe.works
+          ? '$message\nServidor: ${probe.label}. ${probe.advice}'
+          : message;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(explanation),
+          duration: const Duration(seconds: 8),
+          behavior: SnackBarBehavior.floating,
+          width: 420,
+        ),
+      );
+    });
     _startPlayback();
     _autoHideOverlay();
     _loadEpgInfo();
@@ -177,6 +208,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     final playerService = ref.read(playerServiceProvider);
     final urls = [widget.streamUrl, ...widget.alternativeUrls];
 
+    _preflight = null;
+    _preflightWarned = false;
+    _playbackRequestedAt = DateTime.now();
+    unawaited(_probeCurrentStream());
+
     // If channels list is empty, this is a show/VOD stream — always start fresh
     final isShowStream = widget.channels.isEmpty;
 
@@ -190,6 +226,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         channelName: _currentChannelName,
         vanityName: widget.channels.isNotEmpty ? widget.channels[_channelIndex]['vanityName'] as String? : null,
         originalName: widget.channels.isNotEmpty ? widget.channels[_channelIndex]['tvgName'] as String? : null,
+        httpHeaders: widget.channels.isNotEmpty
+            ? (widget.channels[_channelIndex]['httpHeaders']
+                    as Map<String, String>?) ??
+                const <String, String>{}
+            : const <String, String>{},
       );
     }
 
@@ -200,10 +241,57 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
     playerService.bufferingStream.listen((buffering) {
       playerService.onBufferingChanged(buffering);
+      if (buffering) _maybeWarnAboutSlowStart();
       if (playerService.shouldFailover && _hasAlternativeStreams) {
         _switchToNextStream();
       }
     });
+  }
+
+  /// Contacta el stream actual con una petición pequeña y guarda el veredicto.
+  ///
+  /// No decide nada por sí solo (un servidor puede rechazar nuestras cabeceras
+  /// y aun así servir al reproductor): solo aporta el motivo cuando la imagen
+  /// tarda en aparecer.
+  Future<void> _probeCurrentStream() async {
+    final urls = [widget.streamUrl, ...widget.alternativeUrls];
+    if (_currentUrlIndex >= urls.length) return;
+    final url = urls[_currentUrlIndex];
+    final headers = widget.channels.isNotEmpty
+        ? (widget.channels[_channelIndex]['httpHeaders'] as Map<String, String>?) ??
+            const <String, String>{}
+        : const <String, String>{};
+
+    final result = await ref.read(channelProbeProvider).probeUrl(
+          url,
+          headers: headers,
+          timeout: const Duration(seconds: 6),
+        );
+    if (!mounted) return;
+    setState(() => _preflight = result);
+    ref.read(channelHealthStoreProvider).record(url, result);
+  }
+
+  /// Avisa una sola vez, y solo mientras el canal siga sin arrancar.
+  void _maybeWarnAboutSlowStart() {
+    if (_preflightWarned) return;
+    final probe = _preflight;
+    final startedAt = _playbackRequestedAt;
+    // Un canal «lento» sí sirve (sólo hay que darle tiempo): no se avisa.
+    if (probe == null || probe.works || startedAt == null) return;
+    if (DateTime.now().difference(startedAt) < const Duration(seconds: 3)) {
+      return;
+    }
+    _preflightWarned = true;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('This channel is not answering: ${probe.label}. '
+            '${probe.advice}'),
+        duration: const Duration(seconds: 10),
+        behavior: SnackBarBehavior.floating,
+        width: 460,
+      ),
+    );
   }
 
   bool get _hasAlternativeStreams {
@@ -213,6 +301,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   void _switchToNextStream() {
     setState(() => _currentUrlIndex++);
+    // El siguiente servidor es otro: hay que sondearlo de nuevo.
+    _preflight = null;
+    _preflightWarned = false;
+    _playbackRequestedAt = DateTime.now();
+    unawaited(_probeCurrentStream());
     final urls = [widget.streamUrl, ...widget.alternativeUrls];
     ref.read(playerServiceProvider).play(urls[_currentUrlIndex],
       channelName: _currentChannelName,
@@ -323,11 +416,63 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                   },
                 );
               }),
+              // Los canales que pasan por ffmpeg pierden los subtítulos que el
+              // proveedor sirve como pistas aparte (WebVTT no cabe en MPEG-TS),
+              // así que cargar un archivo es la vía que siempre funciona.
+              if (_subtitleTracks.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(top: 4, bottom: 6),
+                  child: Text(
+                    'Este canal no anuncia subtítulos incrustados. Puedes cargar '
+                    'un archivo (.srt, .vtt, .ass) desde tu equipo.',
+                    style: TextStyle(color: Colors.white38, fontSize: 11),
+                  ),
+                ),
+              const Divider(height: 12, color: Colors.white12),
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.folder_open, color: Colors.white70, size: 20),
+                title: const Text('Load subtitle file…',
+                    style: TextStyle(color: Colors.white70, fontSize: 13)),
+                onTap: () async {
+                  final navigator = Navigator.of(ctx);
+                  navigator.pop();
+                  await _loadSubtitleFile();
+                },
+              ),
             ],
           ),
         );
       },
     );
+  }
+
+  /// Carga un subtítulo del disco y lo activa en el reproductor.
+  Future<void> _loadSubtitleFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['srt', 'vtt', 'ass', 'ssa', 'sub'],
+      );
+      final path = result?.files.singleOrNull?.path;
+      if (path == null || !mounted) return;
+
+      final name = path.split(RegExp(r'[\\/]')).last;
+      ref.read(playerServiceProvider).player.setSubtitleTrack(
+            SubtitleTrack.uri(path, title: name),
+          );
+      setState(() => _subtitlesEnabled = true);
+      _loadTrackInfo();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Subtítulos: $name')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo cargar el subtítulo: $e')),
+      );
+    }
   }
 
   void _showAudioPicker() {
@@ -493,6 +638,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   @override
   void dispose() {
     _overlayTimer?.cancel();
+    _playbackErrorSub?.cancel();
     _volumeTimer?.cancel();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();

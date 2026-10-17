@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
 
+import '../../models/epg.dart' show EpgProgrammeSlot;
 import 'tables.dart';
 
 part 'database.g.dart';
@@ -31,11 +32,25 @@ class AppDatabase extends _$AppDatabase {
 
   AppDatabase.forTesting(super.e);
 
+  /// The app's on-disk setup on a given file: same pragmas, migrations and
+  /// background isolate, so tests and benchmarks measure what users get.
+  AppDatabase.forFile(File file)
+      : super(NativeDatabase.createInBackground(file));
+
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
+        // A refresh can insert hundreds of thousands of programmes; in rollback
+        // journal mode each batch waits for an fsync and the write transaction
+        // blocks the guide's reads. WAL lets the guide keep querying while a
+        // refresh writes, and NORMAL keeps the durability the app needs while
+        // dropping the per-batch fsync. Harmless on in-memory test databases.
+        beforeOpen: (details) async {
+          await customStatement('PRAGMA journal_mode = WAL;');
+          await customStatement('PRAGMA synchronous = NORMAL;');
+        },
         onCreate: (m) => m.createAll(),
         onUpgrade: (m, from, to) async {
           if (from < 2) {
@@ -54,6 +69,9 @@ class AppDatabase extends _$AppDatabase {
             await m.createTable(failoverGroups);
             await m.createTable(failoverGroupChannels);
           }
+          if (from < 6) {
+            await m.addColumn(channels, channels.httpHeaders);
+          }
         },
       );
 
@@ -64,13 +82,72 @@ class AppDatabase extends _$AppDatabase {
   Future<void> upsertProvider(ProvidersCompanion entry) =>
       into(providers).insertOnConflictUpdate(entry);
 
-  Future<void> deleteProvider(String id) =>
-      (delete(providers)..where((t) => t.id.equals(id))).go();
+  /// Remove a provider **and everything it contributed**.
+  ///
+  /// Dropping only the provider row left its channels behind: they kept showing
+  /// up in All/group lists (the orphaned Roku entries) with no provider to
+  /// refresh or remove them from, and their EPG mappings pointed at nothing.
+  Future<void> deleteProvider(String id) => transaction(() async {
+        final channelIds = await (select(channels)
+              ..where((t) => t.providerId.equals(id)))
+            .map((t) => t.id)
+            .get();
+
+        await (delete(channels)..where((t) => t.providerId.equals(id))).go();
+        await (delete(epgMappings)..where((t) => t.providerId.equals(id))).go();
+        if (channelIds.isNotEmpty) {
+          await (delete(favoriteListChannels)
+                ..where((t) => t.channelId.isIn(channelIds)))
+              .go();
+          await (delete(failoverGroupChannels)
+                ..where((t) => t.channelId.isIn(channelIds)))
+              .go();
+        }
+
+        // Guide that the playlist itself announced (`#EXTM3U url-tvg=…`).
+        final epgSourceId = '$id-playlist-epg';
+        await (delete(epgProgrammes)..where((t) => t.sourceId.equals(epgSourceId)))
+            .go();
+        await (delete(epgChannels)..where((t) => t.sourceId.equals(epgSourceId)))
+            .go();
+        await (delete(epgMappings)..where((t) => t.epgSourceId.equals(epgSourceId)))
+            .go();
+        await (delete(epgSources)..where((t) => t.id.equals(epgSourceId))).go();
+
+        await (delete(providers)..where((t) => t.id.equals(id))).go();
+      });
 
   // --- Channel queries ---
 
-  Future<List<Channel>> getChannelsForProvider(String providerId) =>
-      (select(channels)..where((t) => t.providerId.equals(providerId))).get();
+  /// Channels of a provider.
+  ///
+  /// Hidden rows are duplicates the parser parked as failover alternatives, so
+  /// listings exclude them by default; pass [includeHidden] when the caller
+  /// needs the whole set (alternatives, failover, EPG mapping).
+  /// Deletes channels left behind by older versions that removed only the
+  /// provider row. They showed up in All/searches with no provider behind them.
+  Future<int> purgeOrphanChannels() => customUpdate(
+        'DELETE FROM channels WHERE provider_id NOT IN '
+        '(SELECT id FROM providers)',
+      );
+
+  Future<List<Channel>> getChannelsForProvider(
+    String providerId, {
+    bool includeHidden = false,
+  }) =>
+      (select(channels)
+            ..where((t) =>
+                t.providerId.equals(providerId) &
+                (includeHidden ? const Constant(true) : t.hidden.equals(false))))
+          .get();
+
+  /// Every channel the user should see in the sidebar and channel lists.
+  Future<List<Channel>> getVisibleChannels() =>
+      (select(channels)..where((t) => t.hidden.equals(false))).get();
+
+  Future<void> setChannelsHidden(Iterable<String> ids, {required bool hidden}) =>
+      (update(channels)..where((t) => t.id.isIn(ids)))
+          .write(ChannelsCompanion(hidden: Value(hidden)));
 
   Future<List<Channel>> getChannelsByIds(Set<String> ids) =>
       (select(channels)..where((t) => t.id.isIn(ids))).get();
@@ -79,7 +156,7 @@ class AppDatabase extends _$AppDatabase {
   Future<Map<String, List<String>>> getProviderGroups() async {
     final rows = await customSelect(
       'SELECT DISTINCT provider_id, group_title FROM channels '
-      'WHERE group_title IS NOT NULL AND group_title != \'\' '
+      "WHERE hidden = 0 AND group_title IS NOT NULL AND group_title != '' "
       'ORDER BY provider_id, group_title',
     ).get();
     final result = <String, List<String>>{};
@@ -92,9 +169,16 @@ class AppDatabase extends _$AppDatabase {
   }
 
   /// Get channels for a specific provider and group.
-  Future<List<Channel>> getChannelsForProviderGroup(String providerId, String groupTitle) =>
+  Future<List<Channel>> getChannelsForProviderGroup(
+    String providerId,
+    String groupTitle, {
+    bool includeHidden = false,
+  }) =>
       (select(channels)..where((t) =>
-          t.providerId.equals(providerId) & t.groupTitle.equals(groupTitle))).get();
+          t.providerId.equals(providerId) &
+          t.groupTitle.equals(groupTitle) &
+          (includeHidden ? const Constant(true) : t.hidden.equals(false))))
+          .get();
 
   Future<List<Channel>> getFavoriteChannels() =>
       (select(channels)..where((t) => t.favorite.equals(true))).get();
@@ -165,6 +249,34 @@ class AppDatabase extends _$AppDatabase {
           .get();
 
   /// Get what's on now for a list of EPG channel IDs.
+  /// Lightweight guide query: only the fields the timeline paints.
+  ///
+  /// The full-row query loads every description/category/episode string of the
+  /// day for each visible channel, which is a lot of memory for data the guide
+  /// never renders.
+  Future<List<EpgProgrammeSlot>> getProgrammeSlots({
+    required String epgChannelId,
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    final query = selectOnly(epgProgrammes)
+      ..addColumns(
+          [epgProgrammes.title, epgProgrammes.start, epgProgrammes.stop])
+      ..where(epgProgrammes.epgChannelId.equals(epgChannelId) &
+          epgProgrammes.start.isBiggerOrEqualValue(start) &
+          epgProgrammes.stop.isSmallerOrEqualValue(end))
+      ..orderBy([OrderingTerm.asc(epgProgrammes.start)]);
+
+    final rows = await query.get();
+    return rows
+        .map((row) => EpgProgrammeSlot(
+              title: row.read(epgProgrammes.title) ?? '',
+              start: row.read(epgProgrammes.start)!,
+              stop: row.read(epgProgrammes.stop)!,
+            ))
+        .toList();
+  }
+
   Future<List<EpgProgramme>> getNowPlaying(List<String> epgChannelIds) {
     final now = DateTime.now();
     return (select(epgProgrammes)
@@ -214,10 +326,23 @@ class AppDatabase extends _$AppDatabase {
   Future<List<Channel>> getAllChannels() => select(channels).get();
 
   /// Delete old programmes to keep DB size manageable.
-  Future<void> pruneOldProgrammes({Duration maxAge = const Duration(days: 7)}) {
-    final cutoff = DateTime.now().subtract(maxAge);
+  Future<void> pruneOldProgrammes({Duration maxAge = const Duration(days: 7)}) =>
+      pruneProgrammes(keepPast: maxAge);
+
+  /// Delete programmes outside the retention window, in both directions.
+  ///
+  /// Feeds usually carry a week or two of listings; keeping the far future (and
+  /// the distant past) only inflates the database and every guide query that
+  /// has to scan it. The next refresh downloads the window again.
+  Future<void> pruneProgrammes({
+    Duration keepPast = const Duration(days: 1),
+    Duration keepFuture = const Duration(days: 7),
+  }) {
+    final now = DateTime.now();
     return (delete(epgProgrammes)
-          ..where((t) => t.stop.isSmallerThanValue(cutoff)))
+          ..where((t) =>
+              t.stop.isSmallerThanValue(now.subtract(keepPast)) |
+              t.start.isBiggerThanValue(now.add(keepFuture))))
         .go();
   }
 
@@ -259,9 +384,47 @@ class AppDatabase extends _$AppDatabase {
 
   // --- Favorite List queries ---
 
+  /// La lista fija de favoritos: la estrella de cada fila añade y quita de
+  /// aquí, sin preguntar a qué lista. Las listas con nombre siguen existiendo
+  /// para organizarlos (Sports, Kids…).
+  static const defaultFavoritesListId = 'favorites-default';
+
   Future<List<FavoriteList>> getAllFavoriteLists() =>
       (select(favoriteLists)..orderBy([(t) => OrderingTerm.asc(t.sortOrder)]))
           .get();
+
+  /// La lista fija de favoritos, creada la primera vez que hace falta.
+  ///
+  /// Idempotente: se puede llamar en cada arranque sin duplicar nada.
+  Future<FavoriteList> ensureDefaultFavoriteList() async {
+    final existing = await (select(favoriteLists)
+          ..where((t) => t.id.equals(defaultFavoritesListId)))
+        .getSingleOrNull();
+    if (existing != null) return existing;
+    await into(favoriteLists).insertOnConflictUpdate(
+      FavoriteListsCompanion.insert(
+        id: defaultFavoritesListId,
+        name: 'Favorites',
+        icon: const Value('star'),
+        // Por delante de las listas con nombre, que empiezan en 0.
+        sortOrder: const Value(-1),
+      ),
+    );
+    return (select(favoriteLists)
+          ..where((t) => t.id.equals(defaultFavoritesListId)))
+        .getSingle();
+  }
+
+  /// Añade o quita el canal de la lista. Devuelve si quedó dentro.
+  Future<bool> toggleChannelInList(String listId, String channelId) async {
+    final inside = await isChannelInList(listId, channelId);
+    if (inside) {
+      await removeChannelFromList(listId, channelId);
+    } else {
+      await addChannelToList(listId, channelId);
+    }
+    return !inside;
+  }
 
   Future<List<Channel>> getChannelsInList(String listId) async {
     final query = select(channels).join([

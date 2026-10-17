@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../data/datasources/local/database.dart' as db;
+import '../../data/services/provider_health.dart';
+import '../channels/channel_scan_host.dart';
 import 'add_provider_dialog.dart';
 import 'provider_manager.dart';
 
@@ -68,6 +70,9 @@ class ProvidersScreen extends ConsumerWidget {
                 ...providers.map((p) => _ProviderCard(provider: p)),
                 const SizedBox(height: 24),
               ],
+              const _SectionHeader(title: 'Your own playlist'),
+              const _AddOwnPlaylistTile(),
+              const SizedBox(height: 24),
               const _SectionHeader(title: 'Free TV Providers'),
               const SizedBox(height: 4),
               ...FreeTvProvider.all.map((fp) => _FreeTvProviderTile(
@@ -80,6 +85,52 @@ class ProvidersScreen extends ConsumerWidget {
       ),
     ),
     ),
+    );
+  }
+}
+
+/// Explicit way in for a playlist of your own.
+///
+/// The `+` in the app bar was the only door and it went unnoticed: nothing on
+/// this screen said a local .m3u8 could be opened at all.
+class _AddOwnPlaylistTile extends StatelessWidget {
+  const _AddOwnPlaylistTile();
+
+  @override
+  Widget build(BuildContext context) {
+    const accent = Color(0xFF6C5CE7);
+    void open() => showAddProviderDialog(context);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF16213E),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: accent.withValues(alpha: 0.6)),
+      ),
+      // El ListTile pinta fondo y salpicaduras en el Material más cercano: sin
+      // uno propio, el color de este Container las taparía (y en depuración la
+      // aserción lo avisa).
+      child: Material(
+        color: Colors.transparent,
+        child: ListTile(
+          onTap: open,
+          leading: const Icon(Icons.playlist_add, color: accent, size: 28),
+          title: const Text(
+            'Add your own playlist',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          subtitle: const Text(
+            'An .m3u8 file from this PC, or an http(s) URL',
+            style: TextStyle(color: Colors.white54),
+          ),
+          trailing: FilledButton.icon(
+            onPressed: open,
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('M3U'),
+            style: FilledButton.styleFrom(backgroundColor: accent),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -108,10 +159,34 @@ class _ProviderCard extends ConsumerWidget {
   final db.Provider provider;
   const _ProviderCard({required this.provider});
 
+  /// Comprueba sólo los canales de este proveedor y deja el resumen guardado:
+  /// con listas de miles de canales, mirar una entera para saber si el problema
+  /// es del servidor es la diferencia entre dos minutos y dos horas.
+  ///
+  /// No abre ningún diálogo: deja pedida la comprobación donde vive el chequeo
+  /// y va a la pantalla de canales, que la corre acoplada a la lista mientras
+  /// el usuario sigue navegando y viendo lo que tuviera puesto.
+  Future<void> _checkChannels(BuildContext context, WidgetRef ref) async {
+    final database = ref.read(databaseProvider);
+    final channels =
+        await database.getChannelsForProvider(provider.id, includeHidden: true);
+    if (!context.mounted) return;
+    if (channels.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${provider.name} has no channels loaded yet')),
+      );
+      return;
+    }
+    ref.read(scanRequestProvider).value = provider.id;
+    context.go('/');
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     const accent = Color(0xFF6C5CE7);
     final isXtream = provider.type == 'xtream';
+    final healthStore = ref.watch(providerHealthStoreProvider);
+    final summary = healthStore.summaryFor(provider.id);
 
     return Focus(
       onKeyEvent: (node, event) {
@@ -178,9 +253,56 @@ class _ProviderCard extends ConsumerWidget {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 6),
+                  // Salud del proveedor: cuántos sirven, cuántos fallos son del
+                  // servidor y cuántos canales ya no existen.
+                  Row(
+                    children: [
+                      if (summary != null && summary.hasData)
+                        Icon(
+                          summary.blamesTheServer
+                              ? Icons.warning_amber_rounded
+                              : Icons.insights_rounded,
+                          size: 14,
+                          color: summary.blamesTheServer
+                              ? const Color(0xFFE67E22)
+                              : Colors.white38,
+                        ),
+                      if (summary != null && summary.hasData)
+                        const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          summary?.label ?? 'Not checked yet',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: summary == null
+                                ? Colors.white38
+                                : summary.workingRatio < 0.2
+                                    ? Colors.redAccent
+                                    : Colors.white70,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (summary != null && summary.hasData)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        summary.diagnosis,
+                        style: const TextStyle(
+                            fontSize: 11, color: Colors.white38),
+                      ),
+                    ),
                 ],
               ),
             ),
+            OutlinedButton.icon(
+              onPressed: () => _checkChannels(context, ref),
+              icon: const Icon(Icons.network_check, size: 18),
+              label: const Text('CHECK'),
+            ),
+            const SizedBox(width: 8),
             IconButton(
               icon: const Icon(Icons.refresh_rounded, size: 20),
               tooltip: 'Refresh',

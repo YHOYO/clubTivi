@@ -1,0 +1,5 @@
+# cmd.exe interpreta mal los .bat con finales de línea LF (sobre todo los
+# bloques entre paréntesis y los goto), así que se guardan siempre en CRLF,
+# se clone donde se clone.
+*.bat text eol=crlf
+*.cmd text eol=crlf
