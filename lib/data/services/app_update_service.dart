@@ -8,20 +8,20 @@ import 'package:path_provider/path_provider.dart';
 import 'app_version.dart';
 import 'release_checksum.dart';
 
-/// Repository the update check reads. Override at build time when the releases
-/// live somewhere else:
+/// Repository the update check reads: el fork que publica los releases de esta
+/// build. Se puede apuntar a otro en tiempo de compilación:
 ///
 ///     flutter build windows --dart-define=CLUBTIVI_UPDATE_REPO=you/clubTivi
 const String _repo = String.fromEnvironment(
   'CLUBTIVI_UPDATE_REPO',
-  defaultValue: 'clubanderson/clubTivi',
+  defaultValue: 'YHOYO/clubTivi',
 );
 
 /// Version the running build reports. It has to match `version:` in
 /// pubspec.yaml, which is what the release tag is derived from; the release
 /// assistant bumps both, and test/version_consistency_test.dart fails if they
 /// ever drift apart.
-const _currentVersion = '0.4.2';
+const _currentVersion = '0.4.3';
 
 /// Everything the app needs from a published release: its notes, the APK for
 /// Android, and the portable ZIP with the manifest that proves its checksum.

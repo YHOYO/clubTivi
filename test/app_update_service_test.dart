@@ -50,6 +50,12 @@ Map<String, dynamic> _payload({String tag = 'v0.5.0'}) => <String, dynamic>{
     };
 
 void main() {
+  test('el actualizador consulta el repositorio que publica los releases', () {
+    expect(AppUpdateService.repository, 'YHOYO/clubTivi',
+        reason: 'si apunta al upstream, la app nunca ve las versiones de este '
+            'fork y no ofrece actualizarse');
+  });
+
   group('parseLatestRelease', () {
     test('picks the portable zip, its manifest and the APK', () {
       final release = AppUpdateService.parseLatestRelease(_payload());
