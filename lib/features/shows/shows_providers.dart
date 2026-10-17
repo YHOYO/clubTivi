@@ -7,7 +7,10 @@ import '../../data/datasources/remote/debrid_service.dart';
 import '../../data/datasources/remote/torrent_search_client.dart';
 import '../../data/repositories/shows_repository.dart';
 import '../../data/models/show.dart';
+import '../../data/models/stream_source.dart';
 import '../../data/services/debrid_settings.dart';
+import '../../data/services/language_preferences_store.dart';
+import '../../data/services/stream_ranker.dart';
 
 // SharedPreferences keys for API credentials
 const _kTraktClientId = 'shows_trakt_client_id';
@@ -112,15 +115,19 @@ class EpisodeParams {
   int get hashCode => traktId.hashCode ^ season.hashCode;
 }
 
-/// Stream resolution for playback
+/// Fuentes para reproducción, ya rankeadas por las preferencias de idioma
+/// persistidas. El ranking es puro; el provider solo lo compone con el
+/// repositorio y recorta a las 10 mejores para la pantalla actual.
 final resolveStreamProvider =
-    FutureProvider.family<List<ResolvedStream>, StreamResolveParams>((ref, params) async {
+    FutureProvider.family<List<StreamSource>, StreamResolveParams>((ref, params) async {
+  final preferences = ref.watch(languagePreferencesProvider);
   final repo = await ref.watch(showsRepositoryProvider.future);
-  return repo.resolveStreams(
+  final sources = await repo.resolveStreams(
     imdbId: params.imdbId,
     season: params.season,
     episode: params.episode,
   );
+  return rankStreams(sources, preferences).take(10).toList(growable: false);
 });
 
 class StreamResolveParams {

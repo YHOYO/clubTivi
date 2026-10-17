@@ -7,6 +7,7 @@ import 'package:palette_generator/palette_generator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../data/models/show.dart';
+import '../../data/models/stream_source.dart';
 import '../../data/services/debrid_settings.dart';
 import 'shows_providers.dart';
 
@@ -444,7 +445,7 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     }
   }
 
-  void _showStreamPicker(List<ResolvedStream> streams, String title) {
+  void _showStreamPicker(List<StreamSource> streams, String title) {
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1A1A2E),
@@ -508,7 +509,7 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
                     return ListTile(
                       leading: _streamQualityBadge(stream.quality),
                       title: Text(
-                        stream.filename,
+                        stream.title,
                         style: TextStyle(
                           color: available ? Colors.white : Colors.white38,
                           fontSize: 13,
@@ -518,7 +519,7 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
                       ),
                       subtitle: Text(
                         [
-                          stream.source,
+                          stream.providerName,
                           if (stream.seeds != null) '👤 ${stream.seeds}',
                           if (!available)
                             stream.unavailableReason ?? kDebridRequiredReason,
@@ -586,7 +587,7 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     );
   }
 
-  Widget _buildUnavailableNotice(BuildContext sheetContext, List<ResolvedStream> streams) {
+  Widget _buildUnavailableNotice(BuildContext sheetContext, List<StreamSource> streams) {
     final unavailable = streams.where((s) => !s.isAvailable).length;
     return Container(
       margin: const EdgeInsets.fromLTRB(20, 8, 20, 0),
@@ -626,7 +627,7 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
 
   /// Explica por qué una fuente no se puede reproducir y ofrece el atajo a
   /// Ajustes, en vez de dejar que la reproducción falle sin motivo.
-  void _showUnavailable(ResolvedStream stream) {
+  void _showUnavailable(StreamSource stream) {
     final reason = stream.unavailableReason ?? kDebridRequiredReason;
     showDialog<void>(
       context: context,
@@ -655,10 +656,10 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     );
   }
 
-  Future<void> _resolveAndPlay(ResolvedStream stream, String title) async {
+  Future<void> _resolveAndPlay(StreamSource stream, String title) async {
     // Una URL directa no depende de debrid: se reproduce tal cual.
     if (stream.isDirect) {
-      _launchPlayer(stream, title);
+      _launchPlayer(stream.url!, title);
       return;
     }
     if (!stream.isAvailable) {
@@ -688,7 +689,7 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
         return;
       }
       if (!mounted) return;
-      _launchPlayer(resolved, title);
+      _launchPlayer(resolved.url, title);
     } on DebridUnavailableException catch (e) {
       _showSnackbar(e.message);
     } catch (e) {
@@ -698,9 +699,9 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     }
   }
 
-  Future<void> _resolveAndDownload(ResolvedStream stream, String title) async {
+  Future<void> _resolveAndDownload(StreamSource stream, String title) async {
     if (stream.isDirect) {
-      await _openDownloadUrl(stream.url);
+      await _openDownloadUrl(stream.url!);
       return;
     }
     if (!stream.isAvailable) {
@@ -772,14 +773,14 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     );
   }
 
-  void _launchPlayer(ResolvedStream stream, String title) {
-    debugPrint('[Shows] Launching player: url=${stream.url}, title=$title');
-    if (stream.url.isEmpty) {
+  void _launchPlayer(String url, String title) {
+    debugPrint('[Shows] Launching player: url=$url, title=$title');
+    if (url.isEmpty) {
       _showSnackbar('Stream URL is empty — try another source');
       return;
     }
     context.push('/player', extra: {
-      'streamUrl': stream.url,
+      'streamUrl': url,
       'channelName': title,
       'channelLogo': widget.initialShow?.posterUrl ?? '',
     });
