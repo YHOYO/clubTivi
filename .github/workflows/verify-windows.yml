@@ -51,30 +51,6 @@ jobs:
       - name: Generate fixtures
         run: python tools/fixtures/generate_fixtures.py
 
-      - name: Start fixture server
-        shell: pwsh
-        run: |
-          $server = Start-Process -FilePath python `
-            -ArgumentList "tools/fixtures/fixtures_server.py", "8899" `
-            -RedirectStandardOutput fixtures-server.log `
-            -RedirectStandardError fixtures-server.err.log `
-            -PassThru
-          $server.Id | Out-File -FilePath fixtures-server.pid -Encoding ascii
-          foreach ($attempt in 1..30) {
-            try {
-              $response = Invoke-WebRequest -Uri http://127.0.0.1:8899/playlist.m3u `
-                -UseBasicParsing -TimeoutSec 2
-              if ($response.StatusCode -eq 200) {
-                Write-Host "fixtures listos ($($response.RawContentLength) bytes)"
-                exit 0
-              }
-            } catch {
-              Start-Sleep -Seconds 1
-            }
-          }
-          Write-Error "el servidor de fixtures no respondio en 30 intentos"
-          exit 1
-
       # ─── Compilacion y arnes ────────────────────────────────────────────
       - name: Build Windows (debug)
         run: flutter build windows --debug
@@ -87,9 +63,40 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path reports | Out-Null
-          flutter test integration_test/windows_functional_test.dart -d windows `
-            --timeout 300s 2>&1 | Tee-Object -FilePath reports/windows-verification.txt
-          $status = $LASTEXITCODE
+          # El servidor de fixtures se levanta aquí, en el mismo paso que lo usa:
+          # un proceso abierto en un paso anterior no llega vivo al arnés.
+          $server = Start-Process -FilePath python `
+            -ArgumentList "tools/fixtures/fixtures_server.py", "8899" `
+            -RedirectStandardOutput fixtures-server.log `
+            -RedirectStandardError fixtures-server.err.log `
+            -PassThru
+          $server.Id | Out-File -FilePath fixtures-server.pid -Encoding ascii
+          $ready = $false
+          foreach ($attempt in 1..30) {
+            try {
+              $response = Invoke-WebRequest -Uri http://127.0.0.1:8899/playlist.m3u `
+                -UseBasicParsing -TimeoutSec 2
+              if ($response.StatusCode -eq 200) {
+                Write-Host "fixtures listos ($($response.RawContentLength) bytes)"
+                $ready = $true
+                break
+              }
+            } catch {
+              Start-Sleep -Seconds 1
+            }
+          }
+          if (-not $ready) {
+            Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+            Write-Error "el servidor de fixtures no respondio en 30 intentos"
+            exit 1
+          }
+          try {
+            flutter test integration_test/windows_functional_test.dart -d windows `
+              --timeout 300s 2>&1 | Tee-Object -FilePath reports/windows-verification.txt
+            $status = $LASTEXITCODE
+          } finally {
+            Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+          }
           flutter --version | Out-File -Append reports/windows-verification.txt
           Copy-Item -Force fixtures-server.log reports/ -ErrorAction SilentlyContinue
           exit $status
@@ -114,11 +121,3 @@ jobs:
           path: reports/
           if-no-files-found: warn
 
-      - name: Stop fixture server
-        if: always()
-        shell: pwsh
-        run: |
-          if (Test-Path fixtures-server.pid) {
-            $serverId = Get-Content fixtures-server.pid
-            Stop-Process -Id $serverId -Force -ErrorAction SilentlyContinue
-          }
