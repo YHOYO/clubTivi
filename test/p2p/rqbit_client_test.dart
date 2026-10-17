@@ -12,6 +12,8 @@ class _FakeRqbit {
   String? lastAddBody;
   Map<String, String>? lastAddQuery;
   int adds = 0;
+  final List<String> actions = [];
+  String? lastListQuery;
 
   _FakeRqbit._(this.server) {
     server.listen(_handle);
@@ -48,6 +50,32 @@ class _FakeRqbit {
             ],
           },
         });
+        return;
+      }
+      if (path == '/torrents' && request.method == 'GET') {
+        lastListQuery = request.uri.query;
+        _json(request, {
+          'torrents': [
+            {
+              'id': 0,
+              'info_hash': '08ada5a7a6183aae1e09d831df6748d566095a10',
+              'name': 'Sintel',
+              'files': [
+                {'name': 'Sintel.mp4', 'length': 1000, 'included': true},
+              ],
+              'stats': {
+                'state': 'live',
+                'progress_bytes': 250,
+                'total_bytes': 1000,
+              },
+            },
+          ],
+        });
+        return;
+      }
+      if (path.startsWith('/torrents/0/') && request.method == 'POST') {
+        actions.add(path);
+        _json(request, const <String, Object?>{});
         return;
       }
       if (path == '/torrents/0' && request.method == 'GET') {
@@ -172,6 +200,31 @@ void main() {
     expect(details.files.single.length, 1000);
     expect(stats.state, 'live');
     expect(stats.progress, closeTo(0.25, 0.0001));
+  });
+
+  test('la lista de torrents llega con stats y pide with_stats', () async {
+    final torrents = await client.listTorrents();
+
+    expect(fake.lastListQuery, 'with_stats=true');
+    expect(torrents, hasLength(1));
+    final torrent = torrents.single;
+    expect(torrent.id, 0);
+    expect(torrent.name, 'Sintel');
+    expect(torrent.stats!.state, 'live');
+    expect(torrent.stats!.progress, closeTo(0.25, 0.0001));
+  });
+
+  test('forget y delete llaman a sus endpoints de acción', () async {
+    await client.forgetTorrent('0');
+    await client.deleteTorrent('0');
+
+    expect(fake.actions, ['/torrents/0/forget', '/torrents/0/delete']);
+  });
+
+  test('overwrite viaja en la query al añadir', () async {
+    await client.addTorrent('magnet:?xt=urn:btih:ABC', overwrite: true);
+
+    expect(fake.lastAddQuery!['overwrite'], 'true');
   });
 
   test('un 404 de rqbit llega con su mensaje humano', () async {

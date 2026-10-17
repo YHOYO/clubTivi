@@ -14,7 +14,11 @@ class _FakeApi implements RqbitApi {
   final List<String> magnets = [];
   final List<String?> outputFolders = [];
   int adds = 0;
+  bool overwriteUsed = false;
   List<RqbitTorrentFile> files = const [];
+  List<RqbitTorrentDetails> torrentList = const [];
+  final List<String> forgotten = [];
+  final List<String> deleted = [];
   String? statsError;
   RqbitTorrentStats currentStats =
       const RqbitTorrentStats(state: 'live', progressBytes: 5, totalBytes: 10);
@@ -29,8 +33,10 @@ class _FakeApi implements RqbitApi {
     String magnet, {
     String? outputFolder,
     List<int>? onlyFiles,
+    bool overwrite = false,
   }) async {
     adds++;
+    overwriteUsed = overwrite;
     magnets.add(magnet);
     outputFolders.add(outputFolder);
     return RqbitAddResult(
@@ -71,6 +77,24 @@ class _FakeApi implements RqbitApi {
       return RqbitTorrentStats(state: 'error', error: statsError);
     }
     return currentStats;
+  }
+
+  @override
+  Future<List<RqbitTorrentDetails>> listTorrents({bool withStats = true}) async =>
+      torrentList;
+
+  @override
+  Future<void> forgetTorrent(String idOrHash) async {
+    forgotten.add(idOrHash);
+    torrentList =
+        torrentList.where((torrent) => '${torrent.id}' != idOrHash).toList();
+  }
+
+  @override
+  Future<void> deleteTorrent(String idOrHash) async {
+    deleted.add(idOrHash);
+    torrentList =
+        torrentList.where((torrent) => '${torrent.id}' != idOrHash).toList();
   }
 
   @override
@@ -264,6 +288,101 @@ void main() {
         ),
       ),
     );
+  });
+
+  test('añade con overwrite para poder reanudar archivos ya presentes',
+      () async {
+    api.files = const [RqbitTorrentFile(name: 'Sintel.mp4', length: 10)];
+
+    await engine.prepare(request(fileIndex: 0));
+
+    expect(api.overwriteUsed, isTrue);
+  });
+
+  test('sin motor arrancado no hay torrents ni acciones', () async {
+    expect(await engine.listTorrents(), isEmpty);
+    expect(engine.isRunning, isFalse);
+    await engine.removeTorrent('0');
+    expect(api.forgotten, isEmpty,
+        reason: 'sin API no se llama a un motor que no existe');
+  });
+
+  test('quitar un torrent usa forget y borra la caché del hash', () async {
+    api.files = const [RqbitTorrentFile(name: 'Sintel.mp4', length: 10)];
+    api.torrentList = const [
+      RqbitTorrentDetails(
+        id: 0,
+        infoHash: 'hash',
+        name: 'Sintel',
+        files: [RqbitTorrentFile(name: 'Sintel.mp4', length: 10)],
+        stats: RqbitTorrentStats(
+          state: 'live',
+          progressBytes: 5,
+          totalBytes: 10,
+        ),
+      ),
+    ];
+    await engine.prepare(request(fileIndex: 0));
+
+    expect((await engine.listTorrents()).single.stats!.progress, 0.5);
+
+    await engine.removeTorrent('0');
+
+    expect(api.forgotten, ['0']);
+    expect(api.deleted, isEmpty);
+    expect(await engine.listTorrents(), isEmpty);
+
+    // Tras olvidarlo, el siguiente play lo vuelve a añadir.
+    await engine.prepare(request(fileIndex: 0));
+    expect(api.adds, 2);
+  });
+
+  test('borrar con archivos usa delete en vez de forget', () async {
+    api.files = const [RqbitTorrentFile(name: 'Sintel.mp4', length: 10)];
+    await engine.prepare(request(fileIndex: 0));
+
+    await engine.removeTorrent('0', deleteFiles: true);
+
+    expect(api.deleted, ['0']);
+    expect(api.forgotten, isEmpty);
+  });
+
+  test('vaciar la sesión olvida todo, para el motor y borra su estado',
+      () async {
+    api.files = const [RqbitTorrentFile(name: 'Sintel.mp4', length: 10)];
+    api.torrentList = const [
+      RqbitTorrentDetails(
+        id: 0,
+        infoHash: 'hash',
+        name: 'Sintel',
+        files: [RqbitTorrentFile(name: 'Sintel.mp4', length: 10)],
+      ),
+    ];
+    await engine.prepare(request(fileIndex: 0));
+    final session = Directory(engine.sessionDirectory);
+    expect(await session.exists(), isTrue);
+
+    await engine.clearSession();
+
+    expect(api.forgotten, ['0']);
+    expect(engine.isRunning, isFalse);
+    expect(await session.exists(), isFalse);
+
+    // El motor vuelve a arrancar para el siguiente play.
+    await engine.prepare(request(fileIndex: 0));
+    expect(engine.isRunning, isTrue);
+  });
+
+  test('parar el motor no lo cierra: el siguiente play lo arranca', () async {
+    api.files = const [RqbitTorrentFile(name: 'Sintel.mp4', length: 10)];
+    await engine.prepare(request(fileIndex: 0));
+
+    await engine.stop();
+    expect(engine.isRunning, isFalse);
+
+    await engine.prepare(request(fileIndex: 0));
+    expect(engine.isRunning, isTrue);
+    expect(supervisorStarts, 2);
   });
 
   test('el segundo play del mismo hash no vuelve a añadir el torrent', () async {

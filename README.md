@@ -68,6 +68,7 @@ The headline feature that sets clubTivi apart. Group the same channel from multi
 - **Built-in rqbit engine** — infoHash sources (Torrentio, any Stremio addon) play without a debrid service
 - **Local only** — the engine listens on `127.0.0.1`, starts on demand, restarts if it dies and shuts down with the app
 - **Range streaming** — playback starts while downloading; files land in `Downloads/clubTivi`
+- **Engine settings** — downloads folder, port and speed limits, plus session and per-torrent cleanup with live status (Settings → P2P Engine)
 - **Verified binary** — bundled in the portable ZIP, or downloaded on demand with SHA-256 check; see [docs/P2P_PLAYBACK.md](docs/P2P_PLAYBACK.md)
 
 ### 🚀 Performance

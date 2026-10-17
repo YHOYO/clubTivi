@@ -22,11 +22,21 @@ abstract class RqbitApi {
     String magnet, {
     String? outputFolder,
     List<int>? onlyFiles,
+    bool overwrite = false,
   });
 
   Future<RqbitTorrentDetails> torrent(String idOrHash);
 
   Future<RqbitTorrentStats> stats(String idOrHash);
+
+  /// Torrents de la sesión, con sus estadísticas cuando [withStats] es true.
+  Future<List<RqbitTorrentDetails>> listTorrents({bool withStats = true});
+
+  /// Saca el torrent de la sesión sin borrar los archivos descargados.
+  Future<void> forgetTorrent(String idOrHash);
+
+  /// Saca el torrent de la sesión y borra también sus archivos.
+  Future<void> deleteTorrent(String idOrHash);
 
   Uri streamUrl(String idOrHash, int fileIndex);
 }
@@ -62,12 +72,16 @@ class RqbitClient implements RqbitApi {
     String magnet, {
     String? outputFolder,
     List<int>? onlyFiles,
+    bool overwrite = false,
   }) async {
     final query = <String, String>{
       if (outputFolder != null && outputFolder.isNotEmpty)
         'output_folder': outputFolder,
       if (onlyFiles != null && onlyFiles.isNotEmpty)
         'only_files': onlyFiles.join(','),
+      // Reanudar un torrent que ya dejó archivos exige allow_overwrite: rqbit
+      // se niega a crearlos si ya existen, incluso siendo los mismos.
+      if (overwrite) 'overwrite': 'true',
     };
     final uri = _endpoint('/torrents', query: query);
     final response = await _send(
@@ -99,11 +113,38 @@ class RqbitClient implements RqbitApi {
   }
 
   @override
+  Future<List<RqbitTorrentDetails>> listTorrents({
+    bool withStats = true,
+  }) async {
+    final response = await _get(
+      '/torrents',
+      query: withStats ? const {'with_stats': 'true'} : null,
+    );
+    return RqbitTorrentDetails.listFromJson(_decode(response.body));
+  }
+
+  @override
+  Future<void> forgetTorrent(String idOrHash) =>
+      _post('/torrents/${Uri.encodeComponent(idOrHash)}/forget');
+
+  @override
+  Future<void> deleteTorrent(String idOrHash) =>
+      _post('/torrents/${Uri.encodeComponent(idOrHash)}/delete');
+
+  @override
   Uri streamUrl(String idOrHash, int fileIndex) =>
       _endpoint('/torrents/${Uri.encodeComponent(idOrHash)}/stream/$fileIndex');
 
-  Future<http.Response> _get(String path) async {
-    final response = await _send(() => _http.get(_endpoint(path)));
+  /// Los endpoints de acción de rqbit no devuelven cuerpo útil.
+  Future<void> _post(String path) async {
+    final response = await _send(() => _http.post(_endpoint(path)));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw RqbitHttpException.fromResponse(response);
+    }
+  }
+
+  Future<http.Response> _get(String path, {Map<String, String>? query}) async {
+    final response = await _send(() => _http.get(_endpoint(path, query: query)));
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw RqbitHttpException.fromResponse(response);
     }

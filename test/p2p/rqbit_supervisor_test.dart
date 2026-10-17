@@ -58,12 +58,18 @@ void main() {
     RqbitPortAllocator? port,
     Duration startTimeout = const Duration(seconds: 2),
     int maxRestarts = 0,
+    int? preferredPort,
+    int? downloadLimit,
+    int? uploadLimit,
   }) {
     return RqbitSupervisor(
       downloadDirectory: downloads,
       stateDirectory: state,
       startProcess: start,
       allocatePort: port ?? () async => 45678,
+      preferredPort: preferredPort,
+      downloadLimitBytesPerSecond: downloadLimit,
+      uploadLimitBytesPerSecond: uploadLimit,
       probe: probe ?? (_) async => true,
       startTimeout: startTimeout,
       probeInterval: const Duration(milliseconds: 10),
@@ -217,20 +223,149 @@ void main() {
     expect(supervisorInstance.baseUri!.port, 45679);
   });
 
-  test('stop es idempotente y deja de aceptar arranques', () async {
+  test('stop para el motor y el siguiente arranque vuelve a funcionar',
+      () async {
+    final processes = <_FakeProcess>[];
     final supervisorInstance = supervisor(
-      start: (exe, args) async => _FakeProcess(9000),
+      start: (exe, args) async {
+        final process = _FakeProcess(9000 + processes.length);
+        processes.add(process);
+        return process;
+      },
     );
+    addTearDown(supervisorInstance.dispose);
 
     await supervisorInstance.ensureRunning('rqbit.exe');
     await supervisorInstance.stop();
     await supervisorInstance.stop();
 
     expect(supervisorInstance.isRunning, isFalse);
+
+    final uri = await supervisorInstance.ensureRunning('rqbit.exe');
+    expect(supervisorInstance.isRunning, isTrue);
+    expect(uri.toString(), 'http://127.0.0.1:45678');
+    expect(processes, hasLength(2));
+  });
+
+  test('dispose es definitivo: ya no arranca nada', () async {
+    final supervisorInstance = supervisor(
+      start: (exe, args) async => _FakeProcess(9200),
+    );
+
+    await supervisorInstance.ensureRunning('rqbit.exe');
+    await supervisorInstance.dispose();
+
+    expect(supervisorInstance.isRunning, isFalse);
     expect(
       () => supervisorInstance.ensureRunning('rqbit.exe'),
       throwsA(isA<RqbitStartException>()),
     );
+  });
+
+  test('un puerto fijo configurado se usa sin pedir puerto libre', () async {
+    var askedForFreePort = false;
+    late List<String> args;
+
+    final automatic = supervisor(
+      start: (exe, arguments) async {
+        args = arguments;
+        return _FakeProcess(9300);
+      },
+      port: () async {
+        askedForFreePort = true;
+        return 11111;
+      },
+    );
+    addTearDown(automatic.dispose);
+
+    await automatic.ensureRunning('rqbit.exe');
+    expect(askedForFreePort, isTrue);
+    expect(args, contains('127.0.0.1:11111'));
+
+    // Con puerto fijo, el reparto automático ni se toca.
+    askedForFreePort = false;
+    final fixed = supervisor(
+      start: (exe, arguments) async {
+        args = arguments;
+        return _FakeProcess(9301);
+      },
+      port: () async {
+        askedForFreePort = true;
+        return 11112;
+      },
+      preferredPort: 33123,
+    );
+    addTearDown(fixed.dispose);
+
+    final uri = await fixed.ensureRunning('rqbit.exe');
+    expect(askedForFreePort, isFalse);
+    expect(uri.port, 33123);
+    expect(args, contains('127.0.0.1:33123'));
+  });
+
+  test('un puerto fijo ocupado se dice antes de arrancar el proceso', () async {
+    final blocker = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(blocker.close);
+    var started = false;
+    final supervisorInstance = supervisor(
+      start: (exe, args) async {
+        started = true;
+        return _FakeProcess(9400);
+      },
+      preferredPort: blocker.port,
+    );
+
+    await expectLater(
+      supervisorInstance.ensureRunning('rqbit.exe'),
+      throwsA(
+        isA<RqbitPortException>().having(
+          (error) => error.message,
+          'message',
+          contains('${blocker.port}'),
+        ),
+      ),
+    );
+    expect(started, isFalse);
+  });
+
+  test('los límites de velocidad llegan como flags globales de rqbit',
+      () async {
+    late List<String> args;
+    final supervisorInstance = supervisor(
+      start: (exe, arguments) async {
+        args = arguments;
+        return _FakeProcess(9500);
+      },
+      downloadLimit: 1048576,
+      uploadLimit: 262144,
+    );
+    addTearDown(supervisorInstance.dispose);
+
+    await supervisorInstance.ensureRunning('rqbit.exe');
+
+    expect(args, containsAllInOrder(['--ratelimit-download', '1048576']));
+    expect(args, containsAllInOrder(['--ratelimit-upload', '262144']));
+    expect(
+      args.indexOf('--ratelimit-download'),
+      lessThan(args.indexOf('server')),
+      reason: 'son flags globales, van antes del subcomando',
+    );
+  });
+
+  test('sin límites no se añaden flags', () async {
+    late List<String> args;
+    final supervisorInstance = supervisor(
+      start: (exe, arguments) async {
+        args = arguments;
+        return _FakeProcess(9600);
+      },
+    );
+    addTearDown(supervisorInstance.dispose);
+
+    await supervisorInstance.ensureRunning('rqbit.exe');
+
+    expect(args, isNot(contains('--ratelimit-download')));
+    expect(args, isNot(contains('--ratelimit-upload')));
   });
 
   test('sin puerto libre el error lo dice', () async {

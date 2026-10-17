@@ -45,6 +45,33 @@ La resolución de fuentes (`ShowsRepository.resolveStreams`) deja de marcar el
 torrent como no disponible cuando hay motor P2P en la plataforma; si un debrid
 falla al resolver, la reproducción cae al motor P2P como red de seguridad.
 
+## Ajustes (Settings → P2P Engine)
+
+La pantalla enseña el estado real y deja cambiarlo sin tocar ficheros a mano:
+
+- **Estado**: si el motor está parado o escuchando (y en qué puerto), de dónde
+  sale el binario (empaquetado, caché o descarga) y su ruta.
+- **Carpeta de descargas**: por defecto `Descargas/clubTivi`; se puede elegir
+  otra y volver a la predeterminada.
+- **Puerto**: vacío = puerto libre automático. Un puerto fijo ocupado se dice
+  antes de arrancar nada. Rango admitido: 1024–65535.
+- **Límites de velocidad** de bajada y subida en KB/s, vacío o 0 = sin límite;
+  se traducen a `--ratelimit-download` / `--ratelimit-upload` de rqbit.
+- **Sesión**: lista de torrents con estado y progreso. Cada uno se puede
+  *quitar* (`forget`: la sesión lo olvida, los archivos se quedan) o *borrar*
+  con sus archivos (`delete`, con confirmación). **Vaciar sesión** olvida todo,
+  para el motor y borra su estado persistido; lo ya descargado se conserva.
+  **Parar motor** es reversible: el siguiente Play lo vuelve a arrancar.
+
+Guardar cualquier ajuste recrea el motor (mata el proceso anterior) para que
+los valores nuevos se apliquen de verdad; la pantalla lo avisa. Los ajustes
+viven en `SharedPreferences` (`p2p_engine_settings`).
+
+Un detalle aprendido probando el binario real: al «quitar» un torrent sus
+archivos se quedan, y rqbit se niega a volver a añadirlo si ya existen
+(`allow_overwrite = false`). Por eso el motor añade siempre con
+`overwrite=true`: reanuda validando lo que ya hay en vez de fallar.
+
 ## Procedencia del binario y licencia
 
 - Proyecto: [ikatson/rqbit](https://github.com/ikatson/rqbit), **Apache-2.0**
