@@ -9,7 +9,9 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../data/models/show.dart';
 import '../../data/models/stream_search_result.dart';
 import '../../data/models/stream_source.dart';
+import '../../data/models/language_preferences.dart';
 import '../../data/services/debrid_settings.dart';
+import '../../data/services/language_preferences_store.dart';
 import '../../data/services/stream_playback.dart';
 import 'shows_providers.dart';
 
@@ -460,6 +462,10 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
 
   void _showStreamPicker(StreamSearchResult result, String title) {
     final streams = result.sources;
+    final preferences = ref.read(languagePreferencesProvider);
+    // Filtro local del selector: no toca el ranking —ya aplicado en `streams`—
+    // ni el orden que ve el usuario.
+    String? languageFilter;
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1A1A2E),
@@ -473,7 +479,11 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
         minChildSize: 0.3,
         expand: false,
         builder: (ctx, scrollController) => SafeArea(
-          child: Column(
+          child: StatefulBuilder(
+            builder: (ctx, setSheetState) {
+              final languages = _languagesIn(streams, preferences);
+              final visible = _filterByLanguage(streams, languageFilter);
+              return Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -503,12 +513,22 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Text(
-                  '$title • ${streams.length} sources',
+                  languageFilter == null
+                      ? '$title • ${streams.length} sources'
+                      : '$title • ${visible.length} of ${streams.length} sources'
+                          ' • ${languageLabel(languageFilter)}',
                   style: const TextStyle(color: Colors.white54, fontSize: 13),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+              if (languages.length > 1)
+                _languageFilterRow(
+                  languages: languages,
+                  selected: languageFilter,
+                  onSelected: (code) =>
+                      setSheetState(() => languageFilter = code),
+                ),
               if (streams.any((s) => !s.isAvailable))
                 _buildUnavailableNotice(ctx, streams),
               if (result.hasFailures) _buildFailureNotice(ctx, result.failures),
@@ -517,9 +537,9 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
               Expanded(
                 child: ListView.builder(
                   controller: scrollController,
-                  itemCount: streams.length,
+                  itemCount: visible.length,
                   itemBuilder: (ctx, index) {
-                    final stream = streams[index];
+                    final stream = visible[index];
                     final available = stream.isAvailable;
                     return ListTile(
                       leading: _streamQualityBadge(stream.quality),
@@ -532,19 +552,25 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      subtitle: Text(
-                        [
-                          stream.providerName,
-                          if (stream.seeds != null) '👤 ${stream.seeds}',
-                          if (!available)
-                            stream.unavailableReason ?? kDebridRequiredReason,
-                        ].join(' • '),
-                        style: TextStyle(
-                          color: available
-                              ? Colors.white38
-                              : Colors.orangeAccent.withValues(alpha: 0.85),
-                          fontSize: 12,
-                        ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            [
+                              stream.providerName,
+                              if (stream.seeds != null) '👤 ${stream.seeds}',
+                              if (!available)
+                                stream.unavailableReason ?? kDebridRequiredReason,
+                            ].join(' • '),
+                            style: TextStyle(
+                              color: available
+                                  ? Colors.white38
+                                  : Colors.orangeAccent.withValues(alpha: 0.85),
+                              fontSize: 12,
+                            ),
+                          ),
+                          _languageBadges(stream, preferences),
+                        ],
                       ),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -596,8 +622,149 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
                 ),
               ),
             ],
+              );
+            },
           ),
         ),
+      ),
+    );
+  }
+
+  /// Idiomas que aparecen en alguna fuente, con las preferencias del usuario
+  /// primero (como el ranking) y el resto por código.
+  List<String> _languagesIn(
+    List<StreamSource> streams,
+    LanguagePreferences preferences,
+  ) {
+    final codes = <String>{};
+    for (final stream in streams) {
+      codes.addAll(_streamLanguages(stream));
+    }
+    return _orderedLanguages(codes, preferences);
+  }
+
+  List<String> _orderedLanguages(
+    Set<String> codes,
+    LanguagePreferences preferences,
+  ) {
+    final remaining = codes.toSet();
+    final ordered = <String>[];
+    for (final preferred in preferences.audioOrder) {
+      final normalized = normalizeLanguageCode(preferred);
+      if (normalized != null && remaining.remove(normalized)) {
+        ordered.add(normalized);
+      }
+    }
+    final rest = remaining.toList()..sort();
+    return [...ordered, ...rest];
+  }
+
+  Set<String> _streamLanguages(StreamSource stream) {
+    final codes = <String>{};
+    for (final raw in {...stream.audioLanguages, ...stream.subtitleLanguages}) {
+      final normalized = normalizeLanguageCode(raw);
+      if (normalized != null) codes.add(normalized);
+    }
+    return codes;
+  }
+
+  /// Filtra sin reordenar: una fuente entra si declara el idioma en audio o en
+  /// subtítulos, que es como se busca «algo en español».
+  List<StreamSource> _filterByLanguage(
+    List<StreamSource> streams,
+    String? language,
+  ) {
+    if (language == null) return streams;
+    return [
+      for (final stream in streams)
+        if (_streamLanguages(stream).contains(language)) stream,
+    ];
+  }
+
+  Widget _languageFilterRow({
+    required List<String> languages,
+    required String? selected,
+    required ValueChanged<String?> onSelected,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 4,
+        children: [
+          ChoiceChip(
+            key: const ValueKey('language-filter-all'),
+            label: const Text('All'),
+            selected: selected == null,
+            onSelected: (_) => onSelected(null),
+            backgroundColor: const Color(0xFF12122A),
+            selectedColor: const Color(0xFF6C5CE7),
+            labelStyle: TextStyle(
+              color: selected == null ? Colors.white : Colors.white70,
+              fontSize: 12,
+            ),
+            side: BorderSide.none,
+            visualDensity: VisualDensity.compact,
+          ),
+          for (final code in languages)
+            ChoiceChip(
+              key: ValueKey('language-filter-$code'),
+              label: Text(languageLabel(code)),
+              selected: selected == code,
+              onSelected: (_) => onSelected(code),
+              backgroundColor: const Color(0xFF12122A),
+              selectedColor: const Color(0xFF6C5CE7),
+              labelStyle: TextStyle(
+                color: selected == code ? Colors.white : Colors.white70,
+                fontSize: 12,
+              ),
+              side: BorderSide.none,
+              visualDensity: VisualDensity.compact,
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Badges de los idiomas que declara la fuente: audio y subtítulos (`CC`).
+  Widget _languageBadges(
+    StreamSource stream,
+    LanguagePreferences preferences,
+  ) {
+    final audio = _orderedLanguages(stream.audioLanguages, preferences);
+    final subtitles =
+        _orderedLanguages(stream.subtitleLanguages, preferences);
+    if (audio.isEmpty && subtitles.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Wrap(
+        spacing: 4,
+        runSpacing: 4,
+        children: [
+          for (final code in audio)
+            _languageBadgeChip(languageBadge(code), Colors.lightBlueAccent),
+          for (final code in subtitles)
+            _languageBadgeChip(
+              'CC ${languageBadge(code)}',
+              Colors.greenAccent,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _languageBadgeChip(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w600),
       ),
     );
   }

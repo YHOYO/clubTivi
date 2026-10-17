@@ -1,6 +1,7 @@
 // El selector de fuentes es donde se decide si algo se puede ver: una fuente
 // directa debe abrir el reproductor sin depender de debrid, y un torrent sin
 // debrid debe explicar el motivo en vez de fallar.
+import 'package:clubtivi/data/models/language_preferences.dart';
 import 'package:clubtivi/data/models/show.dart';
 import 'package:clubtivi/data/models/stream_search_result.dart';
 import 'package:clubtivi/data/models/stream_source.dart';
@@ -40,6 +41,40 @@ const _torrentStream = StreamSource(
   quality: '1080p',
   magnetUrl: 'magnet:?xt=urn:btih:ABCDEF0123456789ABCDEF0123456789ABCDEF01',
   unavailableReason: kDebridRequiredReason,
+);
+
+const _latinoStream = StreamSource(
+  id: 'addon:latino',
+  providerId: 'addon',
+  providerName: 'addon',
+  kind: SourceKind.addon,
+  title: 'Test.Movie.1080p.Latino',
+  url: 'https://example.com/latino.m3u8',
+  quality: '1080p',
+  audioLanguages: {kLanguageSpanishLatin},
+  subtitleLanguages: {kLanguageSpanish},
+);
+
+const _englishStream = StreamSource(
+  id: 'addon:english',
+  providerId: 'addon',
+  providerName: 'addon',
+  kind: SourceKind.addon,
+  title: 'Test.Movie.1080p.English',
+  url: 'https://example.com/english.m3u8',
+  quality: '1080p',
+  audioLanguages: {kLanguageEnglish},
+);
+
+const _voseStream = StreamSource(
+  id: 'addon:vose',
+  providerId: 'addon',
+  providerName: 'addon',
+  kind: SourceKind.addon,
+  title: 'Test.Movie.1080p.VOSE',
+  url: 'https://example.com/vose.m3u8',
+  quality: '1080p',
+  subtitleLanguages: {kLanguageSpanish},
 );
 
 void main() {
@@ -168,5 +203,79 @@ void main() {
     await tester.tap(find.text('Addons'));
     await tester.pumpAndSettle();
     expect(find.text('STREMIO ADDONS'), findsOneWidget);
+  });
+
+  /// Viewport alto: la hoja muestra varias fuentes y sus badges sin recortes.
+  void useTallWindow(WidgetTester tester) {
+    tester.view.physicalSize = const Size(1200, 2200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+  }
+
+  Future<void> openPicker(WidgetTester tester, List<StreamSource> streams) async {
+    await pumpScreen(tester, streams);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Play'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('cada fuente muestra sus idiomas como badges', (tester) async {
+    useTallWindow(tester);
+    await openPicker(
+      tester,
+      const [_latinoStream, _englishStream, _voseStream],
+    );
+
+    expect(find.text('LAT'), findsOneWidget);
+    expect(find.text('ENG'), findsOneWidget);
+    expect(
+      find.text('CC ESP'),
+      findsNWidgets(2),
+      reason: 'latino y VOSE traen subtítulos en español',
+    );
+  });
+
+  testWidgets('el orden que ve el usuario es el que trae el ranking',
+      (tester) async {
+    useTallWindow(tester);
+    await openPicker(
+      tester,
+      const [_latinoStream, _englishStream, _voseStream],
+    );
+
+    double top(String title) =>
+        tester.getTopLeft(find.text(title)).dy;
+
+    expect(top('Test.Movie.1080p.Latino'), lessThan(top('Test.Movie.1080p.English')));
+    expect(top('Test.Movie.1080p.English'), lessThan(top('Test.Movie.1080p.VOSE')));
+
+    // El filtro no reordena: al quitarlo, la lista vuelve igual.
+    await tester.tap(find.byKey(const ValueKey('language-filter-en')));
+    await tester.pumpAndSettle();
+    expect(find.text('Test.Movie.1080p.Latino'), findsNothing);
+    expect(find.text('Test.Movie.1080p.English'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('language-filter-all')));
+    await tester.pumpAndSettle();
+    expect(top('Test.Movie.1080p.Latino'), lessThan(top('Test.Movie.1080p.English')));
+    expect(top('Test.Movie.1080p.English'), lessThan(top('Test.Movie.1080p.VOSE')));
+  });
+
+  testWidgets('se puede filtrar por un idioma que solo está en subtítulos',
+      (tester) async {
+    useTallWindow(tester);
+    await openPicker(tester, const [_englishStream, _voseStream]);
+
+    await tester.tap(find.byKey(const ValueKey('language-filter-es')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Test.Movie.1080p.VOSE'), findsOneWidget);
+    expect(find.text('Test.Movie.1080p.English'), findsNothing);
+    expect(find.textContaining('1 of 2 sources'), findsOneWidget);
+    expect(find.textContaining('Español'), findsWidgets);
+
+    await tester.tap(find.byKey(const ValueKey('language-filter-all')));
+    await tester.pumpAndSettle();
+    expect(find.text('Test.Movie.1080p.English'), findsOneWidget);
   });
 }
