@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:equatable/equatable.dart';
 
 /// A channel from an IPTV playlist (M3U/M3U+ or Xtream Codes).
@@ -15,6 +17,18 @@ class Channel extends Equatable {
   final StreamType streamType;
   final bool isFavorite;
 
+  /// Extra HTTP headers the playlist asks for when fetching [streamUrl].
+  ///
+  /// M3U lists carry them as `#EXTVLCOPT:http-referrer=…` / `http-user-agent=…`
+  /// lines; playlists that guard their CDN behind a referrer (Spanish public
+  /// broadcasters, among others) answer 403 without them. Names are the plain
+  /// HTTP field names, ready to hand to mpv or ffmpeg.
+  final Map<String, String> httpHeaders;
+
+  /// Kept in the database as a failover alternative, but not listed as a
+  /// channel of its own: playlists list the same channel once per mirror.
+  final bool hidden;
+
   const Channel({
     required this.id,
     required this.providerId,
@@ -28,15 +42,63 @@ class Channel extends Equatable {
     required this.streamUrl,
     this.streamType = StreamType.live,
     this.isFavorite = false,
+    this.httpHeaders = const {},
+    this.hidden = false,
   });
+
+  /// This same entry, but as a hidden failover alternative.
+  ///
+  /// The URL is part of the id so a channel that appears several times in a
+  /// playlist keeps all of its mirrors instead of the last one overwriting the
+  /// previous rows (which is how the working stream used to get lost).
+  Channel asAlternative(String providerId, {int occurrence = 1}) => Channel(
+        id: '${providerId}_alt${occurrence}_${'$streamUrl|$name'.hashCode}',
+        providerId: providerId,
+        name: name,
+        tvgId: tvgId,
+        tvgName: tvgName,
+        tvgLogo: tvgLogo,
+        groupTitle: groupTitle,
+        epgChannelId: epgChannelId,
+        channelNumber: channelNumber,
+        streamUrl: streamUrl,
+        streamType: streamType,
+        httpHeaders: httpHeaders,
+        hidden: true,
+      );
 
   /// The best display name available.
   String get displayName => tvgName ?? name;
+
+  /// Whether this stream needs headers beyond what a plain GET sends.
+  bool get needsHttpHeaders => httpHeaders.isNotEmpty;
+
+  /// Serialize [httpHeaders] for storage in the `channels.http_headers` column.
+  /// Returns null when there is nothing to store, so untouched rows keep NULL.
+  static String? encodeHttpHeaders(Map<String, String> headers) =>
+      headers.isEmpty ? null : jsonEncode(headers);
+
+  /// Read back what [encodeHttpHeaders] wrote, tolerating NULL and garbage.
+  static Map<String, String> decodeHttpHeaders(String? raw) {
+    if (raw == null || raw.isEmpty) return const {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return const {};
+      return <String, String>{
+        for (final entry in decoded.entries)
+          entry.key.toString(): entry.value.toString(),
+      };
+    } catch (_) {
+      return const {};
+    }
+  }
 
   Channel copyWith({
     String? epgChannelId,
     bool? isFavorite,
     int? channelNumber,
+    Map<String, String>? httpHeaders,
+    bool? hidden,
   }) {
     return Channel(
       id: id,
@@ -51,6 +113,8 @@ class Channel extends Equatable {
       streamUrl: streamUrl,
       streamType: streamType,
       isFavorite: isFavorite ?? this.isFavorite,
+      httpHeaders: httpHeaders ?? this.httpHeaders,
+      hidden: hidden ?? this.hidden,
     );
   }
 

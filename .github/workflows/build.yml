@@ -123,8 +123,12 @@ jobs:
           path: clubtivi-macos.dmg
 
   # ─── Windows ────────────────────────────────────────────────────────
+  # El paquete lo arma tools/package_windows.ps1, el mismo script que ejecuta el
+  # botón "Compilar y empaquetar.bat" en local: compila, copia la build con sus
+  # DLLs, pone las instrucciones (versión y fecha), añade el creador del acceso
+  # directo, comprime el zip y calcula su SHA-256.
   build-windows:
-    name: Windows (ZIP)
+    name: Windows (ZIP portable)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -135,20 +139,18 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Install dependencies
-        run: flutter pub get
+      - name: Build and package (pub get + build + zip + SHA-256)
+        shell: pwsh
+        run: pwsh -File tools/package_windows.ps1 -Version '${{ inputs.release_tag }}' -UpdateRepo '${{ github.repository }}'
 
-      - name: Build Windows
-        run: flutter build windows --release
-
-      - name: Create ZIP
-        run: Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath "clubtivi-windows.zip"
-
-      - name: Upload ZIP
+      - name: Upload ZIP and checksums
         uses: actions/upload-artifact@v4
         with:
           name: windows-zip
-          path: clubtivi-windows.zip
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
 
   # ─── Linux ──────────────────────────────────────────────────────────
   build-linux:
@@ -209,8 +211,15 @@ jobs:
           cp artifacts/android-aab/app-release.aab        release/clubtivi-android.aab
           cp artifacts/ios-ipa/clubtivi-ios-unsigned.ipa   release/clubtivi-ios-unsigned.ipa
           cp artifacts/macos-dmg/clubtivi-macos.dmg       release/clubtivi-macos.dmg
-          cp artifacts/windows-zip/clubtivi-windows.zip   release/clubtivi-windows.zip
+          cp artifacts/windows-zip/*.zip                  release/
           cp artifacts/linux-tar/clubtivi-linux-x64.tar.gz release/clubtivi-linux-x64.tar.gz
+
+      # Un SHA-256 por fichero, en el formato que entiende `sha256sum -c`.
+      - name: Generate SHA-256 manifest
+        run: |
+          cd release
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Create release
         uses: softprops/action-gh-release@v2

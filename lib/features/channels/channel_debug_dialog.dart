@@ -133,7 +133,8 @@ class _ChannelDebugDialogState extends State<ChannelDebugDialog> {
     if (_playingChannelId != null) {
       final url = widget.channel.streamUrl;
       if (url != null && url.isNotEmpty) {
-        widget.playerService.play(url);
+        widget.playerService.play(url,
+            httpHeaders: Channel.decodeHttpHeaders(widget.channel.httpHeaders));
       }
     }
     super.dispose();
@@ -152,7 +153,7 @@ class _ChannelDebugDialogState extends State<ChannelDebugDialog> {
     if (_playingChannelId == alt.channel.id) return; // already playing
     final url = alt.channel.streamUrl;
     if (url == null || url.isEmpty) return;
-    widget.playerService.play(url);
+    widget.playerService.play(url, httpHeaders: alt.channel.httpHeaders);
     setState(() => _playingChannelId = alt.channel.id);
   }
 
@@ -161,7 +162,8 @@ class _ChannelDebugDialogState extends State<ChannelDebugDialog> {
     if (_playingChannelId == null) return; // already playing original
     final url = widget.channel.streamUrl;
     if (url == null || url.isEmpty) return;
-    widget.playerService.play(url);
+    widget.playerService.play(url,
+        httpHeaders: Channel.decodeHttpHeaders(widget.channel.httpHeaders));
     setState(() => _playingChannelId = null);
   }
 

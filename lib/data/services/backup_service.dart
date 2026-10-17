@@ -13,10 +13,15 @@ final _log = Logger(printer: SimplePrinter());
 const _backupPrefKeys = [
   'shows_trakt_client_id',
   'shows_tmdb_api_key',
+  'shows_debrid_configs',
+  // Se conserva para poder restaurar backups antiguos; al leerlo se migra a
+  // `shows_debrid_configs`.
   'shows_debrid_tokens',
   'shows_favorites',
   'last_group',
   'last_channel_id',
+  'channel_history',
+  'resume_last_channel',
   'failover_enabled',
 ];
 
@@ -115,6 +120,15 @@ class BackupService {
       final prefs = await SharedPreferences.getInstance();
       final data = jsonDecode(utf8.decode(prefFile.content as List<int>))
           as Map<String, dynamic>;
+
+      // Un backup antiguo solo trae el mapa tipo→token. Si la app ya migró a
+      // `shows_debrid_configs`, esa clave taparía la restaurada y la migración
+      // no volvería a correr: se descarta para que se reconstruya al leerla.
+      if (data.containsKey('shows_debrid_tokens') &&
+          !data.containsKey('shows_debrid_configs')) {
+        await prefs.remove('shows_debrid_configs');
+      }
+
       int count = 0;
       for (final entry in data.entries) {
         final v = entry.value;

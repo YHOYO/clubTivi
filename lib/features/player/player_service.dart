@@ -8,7 +8,9 @@ import 'package:media_kit/src/player/native/player/real.dart' as native_player;
 import 'package:media_kit_video/media_kit_video.dart';
 
 import 'adaptive_buffer.dart';
+import 'buffer_progress.dart';
 import 'stream_proxy.dart';
+import '../../data/services/channel_history_service.dart';
 import '../../data/services/stream_alternatives_service.dart';
 import '../../data/services/stream_health_tracker.dart';
 
@@ -20,6 +22,11 @@ class PlayerService {
   bool _isBuffering = false;
   DateTime? _bufferStartTime;
   StreamSubscription<Tracks>? _tracksSub;
+
+  /// Progreso de carga del canal actual. Se apoya en mpv para el búfer y en
+  /// el estado de la app para saber si se está reconvirtiendo por ffmpeg.
+  late final BufferProgressProbe _bufferProgress =
+      BufferProgressProbe(readProperty: getMpvProperty);
 
   // Buffer health tracking (persists across info dialog opens)
   final List<bool> bufferHistory = List.filled(60, false, growable: true);
@@ -40,12 +47,26 @@ class PlayerService {
   String? _currentChannelName;
   String? _currentVanityName;
   String? _currentOriginalName;
+
+  /// Extra HTTP headers the current stream needs (playlist `#EXTVLCOPT`).
+  /// They follow the stream across proxy retries and failover switches.
+  Map<String, String> _httpHeaders = const {};
   StreamAlternativesService? _alternatives;
   StreamHealthTracker? _healthTracker;
   Timer? _failoverCheckTimer;
   int _consecutiveLowBuffer = 0;
+
+  /// Último `time-pos` visto y nº de muestras seguidas sin avanzar.
+  /// Sirven para detectar streams colgados cuando mpv no expone la caché del
+  /// demuxer (habitual en MPEG-TS/HLS en vivo: `demuxer-cache-duration` llega
+  /// vacío y el monitor se quedaba sin ninguna señal).
+  double? _lastTimePos;
+  int _stagnantTicks = 0;
   final StreamProxy _streamProxy = StreamProxy();
   bool _proxyActive = false;
+
+  /// Whether the ffmpeg fallback has already been tried for the current stream.
+  bool _formatRetryDone = false;
 
   // ── Warm failover: background pre-buffer player ──
   Player? _warmPlayer;
@@ -63,6 +84,30 @@ class PlayerService {
   /// Callback invoked when auto-failover switches streams.
   /// Provides the provider name or URL fragment for UI toast.
   void Function(String message)? onFailover;
+
+  /// Aviso de cada canal que el usuario abre, para el historial de visitados.
+  ///
+  /// Se avisa aquí y no en cada pantalla porque hay muchos caminos hasta el
+  /// reproductor (lista, guía, siguiente/anterior, multi-view, mando web) y
+  /// todos acaban en `play()` con el id del canal.
+  void Function(String channelId)? onChannelVisited;
+
+  /// Errores de reproducción ya traducidos a algo legible (403, DNS,
+  /// geo-bloqueo…). Sin esto, un canal que no arranca se queda en «Buffering»
+  /// para siempre y el usuario no sabe si es su red, el canal o la app.
+  final _errorController = StreamController<String>.broadcast();
+  Stream<String> get errors => _errorController.stream;
+
+  /// Último error notificado, para la UI que se conecte tarde.
+  String? lastError;
+  StreamSubscription<String>? _errorSub;
+  DateTime? _lastErrorAt;
+
+  /// Cuándo se abrió el stream actual; sirve para detectar que nunca arranca.
+  DateTime? _playStartedAt;
+
+  /// Margen antes de declarar que un stream no va a arrancar.
+  static const noStartupTimeout = Duration(seconds: 20);
 
   /// The channel ID that failover most recently switched to, if available.
   String? lastFailoverChannelId;
@@ -123,7 +168,10 @@ class PlayerService {
   }
 
   /// Inject services for auto-failover (call once at startup).
-  void configureFailover(StreamAlternativesService alternatives, StreamHealthTracker health) {
+  ///
+  /// Passing `null` disables auto-failover entirely — useful for tests that
+  /// drive a single stream without wanting the monitor to switch away.
+  void configureFailover(StreamAlternativesService? alternatives, StreamHealthTracker? health) {
     _alternatives = alternatives;
     _healthTracker = health;
   }
@@ -140,12 +188,19 @@ class PlayerService {
     String? vanityName,
     String? originalName,
     List<String>? failoverGroupUrls,
+    Map<String, String>? httpHeaders,
   }) async {
+    _httpHeaders = httpHeaders ?? const {};
     _isBuffering = false;
     _bufferStartTime = null;
     _consecutiveLowBuffer = 0;
+    _lastTimePos = null;
+    _stagnantTicks = 0;
     _currentUrl = url;
     _currentChannelId = channelId;
+    if (channelId != null && channelId.isNotEmpty) {
+      onChannelVisited?.call(channelId);
+    }
     _currentEpgChannelId = epgChannelId;
     _currentTvgId = tvgId;
     _currentChannelName = channelName;
@@ -156,8 +211,16 @@ class PlayerService {
     _failoverCheckTimer?.cancel();
     _disposeWarmPlayer();
     _proxyActive = false;
+    _playStartedAt = DateTime.now();
+    lastError = null;
+    _lastErrorAt = null;
+    _errorSub?.cancel();
+    _errorSub = player.stream.error.listen(_onPlayerError);
+    _formatRetryDone = false;
+    _bufferProgress.begin();
     await _streamProxy.stop();
     await _ensureReady();
+    await _applyHttpHeaders();
     await player.open(Media(url));
     await _bufferManager.applyForStream(url, this);
     await player.setVolume(100.0);
@@ -172,6 +235,108 @@ class PlayerService {
     bufferingSeconds = 0;
     startBufferTracking();
     _startFailoverMonitor();
+  }
+
+  /// Antes de dar un canal por roto, un reintento por ffmpeg.
+  ///
+  /// El «Failed to recognize file format» de mpv aparece con manifiestos que sí
+  /// son válidos (variantes HLS raras, MPEG-TS servido como lista, protocolos
+  /// que mpv no reconoce por la extensión). ffmpeg entra con `-c copy`, así que
+  /// si él entiende el flujo, el canal se ve en vez de quedarse en el error.
+  void _onPlayerError(String raw) {
+    final lower = raw.toLowerCase();
+    final unrecognised = lower.contains('recognize file format') ||
+        lower.contains('unrecognized file format') ||
+        lower.contains('cannot open') ||
+        lower.contains('unknown protocol') ||
+        lower.contains('no demuxer');
+
+    if (unrecognised &&
+        !_formatRetryDone &&
+        !_proxyActive &&
+        _currentUrl != null) {
+      _formatRetryDone = true;
+      debugPrint('[Player] Format not recognised, retrying via ffmpeg: '
+          '$_currentUrl');
+      _retryWithProxy(_currentUrl!).then((_) {
+        if (_proxyActive) {
+          _reportPlaybackError(
+              'Este canal envía un formato que el reproductor no reconocía; se '
+              'está reintentando con ffmpeg.');
+        }
+      });
+      return;
+    }
+
+    _reportPlaybackError(_explainPlaybackError(raw));
+  }
+
+  /// Publica un error de reproducción legible, evitando repetir el mismo
+  /// mensaje en ráfaga (mpv emite varios logs por el mismo fallo).
+  void _reportPlaybackError(String? message) {
+    if (message == null || message.isEmpty) return;
+    final now = DateTime.now();
+    if (lastError == message &&
+        _lastErrorAt != null &&
+        now.difference(_lastErrorAt!) < const Duration(seconds: 10)) {
+      return;
+    }
+    lastError = message;
+    _lastErrorAt = now;
+    debugPrint('[Player] error: $message');
+    if (!_errorController.isClosed) _errorController.add(message);
+  }
+
+  /// Traduce el log de mpv/ffmpeg a algo que el usuario pueda interpretar.
+  /// Devuelve null para el ruido que no explica nada.
+  static String? _explainPlaybackError(String raw) {
+    final text = raw.trim();
+    if (text.isEmpty) return null;
+    final lower = text.toLowerCase();
+    if (lower.contains('403') || lower.contains('forbidden')) {
+      return 'El canal rechazó la conexión (403 Forbidden). Suele estar '
+          'bloqueado por país o exigir cabeceras del proveedor.';
+    }
+    if (lower.contains('404') || lower.contains('not found')) {
+      return 'El canal ya no existe en el proveedor (404).';
+    }
+    if (lower.contains('timeout') || lower.contains('timed out')) {
+      return 'El servidor del canal no responde (timeout).';
+    }
+    if (lower.contains('connection refused') ||
+        lower.contains('could not connect') ||
+        lower.contains('failed to connect') ||
+        lower.contains('no route to host') ||
+        lower.contains('could not resolve')) {
+      return 'No se pudo conectar con el servidor del canal.';
+    }
+    if (lower.contains('recognize file format') ||
+        lower.contains('unrecognized file format')) {
+      return 'El canal no envía ningún flujo que el reproductor reconozca '
+          '(manifiesto caducado, página de error o formato no soportado).';
+    }
+    if (lower.contains('failed to open') || lower.contains('cannot open')) {
+      return 'No se pudo abrir el stream: $text';
+    }
+    return null;
+  }
+
+  /// Push [_httpHeaders] into mpv before opening a stream.
+  ///
+  /// mpv takes the fields as a comma-separated list. Clearing the option when
+  /// the channel has none matters: without it, headers set for a previous
+  /// referrer-locked channel would leak into the next one.
+  Future<void> _applyHttpHeaders() async {
+    final np = player.platform;
+    if (np is! native_player.NativePlayer) return;
+    final fields = _httpHeaders.entries
+        .map((e) => '${e.key}: ${e.value}')
+        .join(',');
+    try {
+      await np.setProperty('http-header-fields', fields);
+    } catch (e) {
+      debugPrint('[Player] Could not set http-header-fields: $e');
+    }
   }
 
   /// Check audio tracks after playback starts; retry through ffmpeg proxy
@@ -200,7 +365,8 @@ class PlayerService {
   /// Re-open the stream through the local ffmpeg proxy.
   Future<void> _retryWithProxy(String originalUrl) async {
     if (_proxyActive) return; // Avoid recursive retry
-    final proxyUrl = await _streamProxy.start(originalUrl);
+    final proxyUrl =
+        await _streamProxy.start(originalUrl, headers: _httpHeaders);
     if (proxyUrl == null) {
       debugPrint('[Player] ffmpeg proxy unavailable, keeping direct playback');
       return;
@@ -211,6 +377,9 @@ class PlayerService {
       return;
     }
     _proxyActive = true;
+    // La espera cambia de motivo: ahora es ffmpeg quien prepara el flujo, y
+    // el indicador lo dice en vez de quedarse en «Conectando».
+    _bufferProgress.markConverting();
     debugPrint('[Player] Switching to proxied stream: $proxyUrl');
     await player.open(Media(proxyUrl));
     await _bufferManager.applyForStream(originalUrl, this);
@@ -249,6 +418,13 @@ class PlayerService {
   /// Stream of buffering state changes.
   Stream<bool> get bufferingStream => player.stream.buffering;
 
+  /// Progreso de carga con datos reales de mpv (búfer, velocidad) y la fase
+  /// en la que está la app. Ver [BufferProgress].
+  Stream<BufferProgress> get bufferProgressStream => _bufferProgress.stream;
+
+  /// Último progreso conocido, para quien se conecte tarde.
+  BufferProgress? get bufferProgress => _bufferProgress.latest;
+
   /// Stream of playback position.
   Stream<Duration> get positionStream => player.stream.position;
 
@@ -266,6 +442,7 @@ class PlayerService {
 
   /// Called when buffering state changes — used by failover engine.
   void onBufferingChanged(bool buffering) {
+    _bufferProgress.setBuffering(buffering);
     if (buffering && !_isBuffering) {
       _isBuffering = true;
       _bufferStartTime = DateTime.now();
@@ -335,12 +512,44 @@ class PlayerService {
 
       final raw = await getMpvProperty('demuxer-cache-duration');
       final cacheSecs = double.tryParse(raw ?? '');
-      if (cacheSecs == null) return;
+      final timePos = double.tryParse(await getMpvProperty('time-pos') ?? '');
+      final paused = await getMpvProperty('pause') == 'yes';
+      final idleActive = await getMpvProperty('idle-active') == 'yes';
 
-      // Record health sample
-      _healthTracker?.recordBufferSample(_currentUrl!, cacheSecs);
+      // Señal 3: el stream nunca llegó a arrancar. Con las otras dos no basta,
+      // porque sin `time-pos` no hay estancamiento que detectar y la UI se
+      // queda en «Buffering» indefinidamente sin explicar el motivo.
+      if (_playStartedAt != null) {
+        if (timePos != null && timePos > 0.5) {
+          _playStartedAt = null;
+        } else if (DateTime.now().difference(_playStartedAt!) >
+            noStartupTimeout) {
+          _playStartedAt = null;
+          _reportPlaybackError('El canal no responde (ni vídeo ni audio en '
+              '${noStartupTimeout.inSeconds} s). Comprueba que el stream '
+              'funcione fuera de la app.');
+        }
+      }
 
-      if (cacheSecs < 1.0) {
+      // Señal 1: la caché del demuxer se queda sin datos.
+      final bufferStalled = cacheSecs != null && cacheSecs < 1.0;
+
+      // Señal 2: el tiempo de reproducción no avanza. Es la única señal
+      // disponible cuando mpv no publica `demuxer-cache-duration` (TS/HLS en
+      // vivo), y sin ella el monitor no detectaba nada y nunca saltaba.
+      final stalled = timePos != null &&
+          _lastTimePos != null &&
+          (timePos - _lastTimePos!).abs() < 0.05 &&
+          !paused &&
+          !idleActive;
+      _lastTimePos = timePos;
+      _stagnantTicks = stalled ? _stagnantTicks + 1 : 0;
+
+      if (cacheSecs != null) {
+        _healthTracker?.recordBufferSample(_currentUrl!, cacheSecs);
+      }
+
+      if (bufferStalled || _stagnantTicks >= 2) {
         _consecutiveLowBuffer++;
         if (_consecutiveLowBuffer >= 2 && !_warmReady && _warmPlayer == null) {
           // 4+ seconds of low buffer → start pre-buffering alternative (warm)
@@ -409,6 +618,16 @@ class PlayerService {
       np.setProperty('audio-normalize-downmix', 'yes');
       np.setProperty('af', 'loudnorm=I=-14:TP=-1:LRA=13');
       np.setProperty('volume', '0'); // silent
+      // The alternative belongs to the same channel, so it needs the same
+      // headers; without them a referrer-locked stream would never buffer.
+      if (_httpHeaders.isNotEmpty) {
+        np.setProperty(
+          'http-header-fields',
+          _httpHeaders.entries
+              .map((e) => '${e.key}: ${e.value}')
+              .join(','),
+        );
+      }
     }
 
     // Listen for buffering state — when it stops buffering, stream is ready
@@ -457,6 +676,8 @@ class PlayerService {
       debugPrint('[Failover] Instant switch to warm-buffered: $_warmUrl');
       final newUrl = _warmUrl!;
       _consecutiveLowBuffer = 0;
+      _lastTimePos = null;
+      _stagnantTicks = 0;
       _failoverCheckTimer?.cancel();
 
       // Dispose warm player (we'll re-open on main player)
@@ -483,6 +704,8 @@ class PlayerService {
 
     final newUrl = alts.first;
     _consecutiveLowBuffer = 0;
+    _lastTimePos = null;
+    _stagnantTicks = 0;
 
     // Switch stream (keep channel metadata — it's the same content)
     _failoverCheckTimer?.cancel();
@@ -501,7 +724,10 @@ class PlayerService {
 
   void dispose() {
     _bufferManager.stop();
+    _bufferProgress.dispose();
     _tracksSub?.cancel();
+    _errorSub?.cancel();
+    _errorController.close();
     _bufferTrackSub?.cancel();
     _bufferTrackTimer?.cancel();
     _failoverCheckTimer?.cancel();
@@ -515,6 +741,15 @@ class PlayerService {
 /// Riverpod provider for the player service (singleton).
 final playerServiceProvider = Provider<PlayerService>((ref) {
   final service = PlayerService();
+  // Historial de canales: cualquier apertura deja la visita apuntada, y el
+  // último visitado es el que la app vuelve a cargar al arrancar.
+  service.onChannelVisited = (channelId) {
+    try {
+      unawaited(ref.read(channelHistoryProvider).record(channelId));
+    } catch (_) {
+      // El historial es un extra: que no tumbe la reproducción.
+    }
+  };
   // Inject failover services
   try {
     final alternatives = ref.read(streamAlternativesProvider);

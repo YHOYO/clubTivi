@@ -194,3 +194,20 @@ class MappingStats {
   double get unmappedPercent =>
       totalChannels > 0 ? unmapped / totalChannels * 100 : 0;
 }
+
+/// The three fields the guide timeline actually renders for a programme.
+///
+/// Loading whole [EpgProgramme] rows for the grid means pulling every
+/// description, category and episode string for hundreds of channels; the guide
+/// only paints a title on a time slot, so it queries this projection instead.
+class EpgProgrammeSlot {
+  final String title;
+  final DateTime start;
+  final DateTime stop;
+
+  const EpgProgrammeSlot({
+    required this.title,
+    required this.start,
+    required this.stop,
+  });
+}

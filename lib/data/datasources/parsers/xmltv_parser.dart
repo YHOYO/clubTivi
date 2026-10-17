@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:xml/xml.dart';
+import 'package:xml/xml_events.dart';
 import 'package:archive/archive.dart';
 
 import '../../models/epg.dart';
@@ -54,6 +55,158 @@ class XmltvParser {
   Future<XmltvResult> parseFile(File file, {required String sourceId}) async {
     final bytes = await file.readAsBytes();
     return parseBytes(bytes, sourceId: sourceId);
+  }
+
+  /// Parse a possibly gzipped XMLTV byte buffer incrementally.
+  ///
+  /// Shorthand for [parseStreaming] that detects the gzip magic bytes, which is
+  /// what a downloaded feed looks like.
+  Future<XmltvStreamStats> parseBytesStreaming(
+    List<int> bytes, {
+    required String sourceId,
+    int batchSize = 2000,
+    DateTime? keepFrom,
+    DateTime? keepUntil,
+    void Function(List<EpgChannel> channels)? onChannels,
+    Future<void> Function(List<EpgProgramme> programmes)? onProgrammes,
+  }) {
+    final gzipped =
+        bytes.length > 2 && bytes[0] == 0x1f && bytes[1] == 0x8b;
+    return parseStreaming(
+      Stream<List<int>>.value(bytes),
+      sourceId: sourceId,
+      gzipped: gzipped,
+      batchSize: batchSize,
+      keepFrom: keepFrom,
+      keepUntil: keepUntil,
+      onChannels: onChannels,
+      onProgrammes: onProgrammes,
+    );
+  }
+
+  /// Parse an XMLTV feed as a stream of events, one element at a time.
+  ///
+  /// [parse] materializes the decompressed XML *and* a full document tree *and*
+  /// every model object at once: an 8 MB gzip feed with ~180k programmes needs
+  /// several hundred MB of headroom that way. This path keeps a single element
+  /// in memory, hands [batchSize]-sized batches to [onProgrammes] (so the caller
+  /// can persist them and let the garbage collector reclaim them) and drops
+  /// programmes outside the [keepFrom]/[keepUntil] window — the guide only ever
+  /// reads a few days around now, and keeping the rest is what makes both the
+  /// database and the app grow without bound.
+  Future<XmltvStreamStats> parseStreaming(
+    Stream<List<int>> bytes, {
+    required String sourceId,
+    int batchSize = 2000,
+    DateTime? keepFrom,
+    DateTime? keepUntil,
+    bool gzipped = false,
+    void Function(List<EpgChannel> channels)? onChannels,
+    Future<void> Function(List<EpgProgramme> programmes)? onProgrammes,
+  }) async {
+    assert(batchSize > 0, 'batchSize debe ser positivo');
+
+    final stats = XmltvStreamStats();
+    final decoded = gzipped ? bytes.transform(gzip.decoder) : bytes;
+    final events = decoded
+        .transform(utf8.decoder)
+        .toXmlEvents()
+        .normalizeEvents()
+        .flatten();
+
+    final buffer = StringBuffer();
+    var capturing = false;
+    var depth = 0;
+    var channelBatch = <EpgChannel>[];
+    var programmeBatch = <EpgProgramme>[];
+
+    Future<void> flushChannels() async {
+      if (channelBatch.isEmpty) return;
+      final batch = channelBatch;
+      channelBatch = <EpgChannel>[];
+      onChannels?.call(batch);
+    }
+
+    Future<void> flushProgrammes() async {
+      if (programmeBatch.isEmpty) return;
+      final batch = programmeBatch;
+      programmeBatch = <EpgProgramme>[];
+      stats.batches++;
+      if (onProgrammes != null) await onProgrammes(batch);
+    }
+
+    Future<void> finishElement(String fragment) async {
+      capturing = false;
+      depth = 0;
+      buffer.clear();
+
+      final XmlElement element;
+      try {
+        element = XmlDocument.parse(fragment).rootElement;
+      } catch (_) {
+        stats.malformed++;
+        return;
+      }
+
+      if (element.localName == 'channel') {
+        final channel = _parseChannel(element, sourceId);
+        if (channel != null) {
+          channelBatch.add(channel);
+          stats.channels++;
+        }
+        return;
+      }
+
+      final programme = _parseProgramme(element, sourceId);
+      if (programme == null) {
+        stats.malformed++;
+        return;
+      }
+
+      final startsBeforeEnd =
+          keepUntil == null || !programme.start.isAfter(keepUntil);
+      final endsAfterStart =
+          keepFrom == null || !programme.stop.isBefore(keepFrom);
+      if (!startsBeforeEnd || !endsAfterStart) {
+        stats.skipped++;
+        return;
+      }
+
+      // The guide channels always arrive before the first programme: hand them
+      // over before the data that depends on them.
+      await flushChannels();
+      programmeBatch.add(programme);
+      stats.programmes++;
+      if (programmeBatch.length >= batchSize) await flushProgrammes();
+    }
+
+    await for (final event in events) {
+      if (!capturing) {
+        if (event is XmlStartElementEvent &&
+            (event.localName == 'channel' ||
+                event.localName == 'programme')) {
+          capturing = true;
+          depth = 1;
+          buffer.write(event.toString());
+          if (event.isSelfClosing) {
+            await finishElement(buffer.toString());
+          }
+        }
+        continue;
+      }
+
+      buffer.write(event.toString());
+      if (event is XmlStartElementEvent) {
+        if (!event.isSelfClosing) depth++;
+      } else if (event is XmlEndElementEvent) {
+        depth--;
+        if (depth <= 0) await finishElement(buffer.toString());
+      }
+    }
+
+    await flushChannels();
+    await flushProgrammes();
+    return stats;
   }
 
   EpgChannel? _parseChannel(XmlElement element, String sourceId) {
@@ -175,6 +328,29 @@ class XmltvParser {
       return null;
     }
   }
+}
+
+/// Outcome of a streaming XMLTV parse.
+class XmltvStreamStats {
+  /// Channels handed to the caller.
+  int channels = 0;
+
+  /// Programmes kept (inside the retention window).
+  int programmes = 0;
+
+  /// Programmes dropped because they fall outside the window.
+  int skipped = 0;
+
+  /// Elements that could not be parsed.
+  int malformed = 0;
+
+  /// Number of programme batches passed to the caller.
+  int batches = 0;
+
+  @override
+  String toString() =>
+      'XmltvStreamStats(channels: $channels, programmes: $programmes, '
+      'skipped: $skipped, malformed: $malformed, batches: $batches)';
 }
 
 /// Result of parsing an XMLTV document.

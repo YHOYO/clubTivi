@@ -443,6 +443,7 @@ class StreamAlternativesService {
             : c.streamType == 'series'
                 ? StreamType.series
                 : StreamType.live,
+        httpHeaders: Channel.decodeHttpHeaders(c.httpHeaders),
       );
 }
 

@@ -32,6 +32,8 @@ migrate_working_dir/
 .pub/
 /build/
 /coverage/
+# Paquete portable que se genera con `flutter build windows --release`
+/dist/
 
 # Symbolication related
 app.*.symbols
@@ -44,3 +46,6 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 flutter_02.png
+
+# Local verification fixtures (generated, not part of the repo)
+.dev/

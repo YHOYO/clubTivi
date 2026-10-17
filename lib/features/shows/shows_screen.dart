@@ -100,7 +100,7 @@ class _ShowsScreenState extends ConsumerState<ShowsScreen> {
               ),
               const SizedBox(height: 12),
               const Text(
-                'Configure at least a Trakt or TMDB API key in Settings\nto browse trending shows, movies, and stream via Real-Debrid.',
+                'Configure at least a Trakt or TMDB API key in Settings\nto browse trending shows and movies.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.white60, fontSize: 16),
               ),

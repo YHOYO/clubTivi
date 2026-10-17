@@ -1,6 +1,3 @@
-import 'dart:io';
-import 'dart:convert';
-
 import 'package:drift/drift.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -9,21 +6,22 @@ import 'package:uuid/uuid.dart';
 
 import '../datasources/local/database.dart' as db;
 import '../datasources/parsers/xmltv_parser.dart';
-import '../models/epg.dart';
 import '../../features/providers/provider_manager.dart';
 
-/// Runs heavy XML parsing in a background isolate.
-XmltvResult _parseInIsolate(_ParseArgs args) {
-  return XmltvParser().parse(args.xml, sourceId: args.sourceId);
-}
-
-class _ParseArgs {
-  final String xml;
-  final String sourceId;
-  const _ParseArgs(this.xml, this.sourceId);
-}
-
 class EpgRefreshService {
+  /// Guide window kept in the database around "now".
+  ///
+  /// Feeds carry far more (the default sources ship a week or two of listings),
+  /// and storing it all was what made the guide database — and the memory the
+  /// app needs to walk it — grow without bound.
+  static const retentionPast = Duration(days: 1);
+  static const retentionFuture = Duration(days: 7);
+
+  /// Programmes handed to SQLite per batch during a refresh. Large enough that
+  /// the transaction count stays small (each commit is a real disk sync) and
+  /// small enough that a batch is a few hundred KB of objects.
+  static const insertBatchSize = 5000;
+
   final db.AppDatabase _db;
   final _uuid = const Uuid();
 
@@ -50,46 +48,61 @@ class EpgRefreshService {
       final bytes = response.data!;
       debugPrint('[EPG] Downloaded ${bytes.length} bytes');
 
-      // Decompress + parse in background isolate to avoid ANR
-      final result = await compute(_decompressAndParse, _DecompressParseArgs(bytes, sourceId));
-      debugPrint('[EPG] Parsed ${result.channels.length} channels, ${result.programmes.length} programmes');
+      final now = DateTime.now();
+      final stopwatch = Stopwatch()..start();
 
-      // Store channels
-      final channelCompanions = result.channels.map((c) {
-        return db.EpgChannelsCompanion.insert(
-          id: '${sourceId}_${c.id}',
-          sourceId: sourceId,
-          channelId: c.id,
-          displayName: c.primaryName,
-          iconUrl: Value(c.iconUrl),
-        );
-      }).toList();
-      await _db.upsertEpgChannels(channelCompanions);
-
-      // Delete old programmes for this source, then insert new ones in batches
+      // Old programmes go first: the streamed parse writes the new ones as it
+      // walks the feed.
       await _db.deleteEpgProgrammesForSource(sourceId);
-      final programmeCompanions = result.programmes.map((p) {
-        return db.EpgProgrammesCompanion.insert(
-          epgChannelId: '${sourceId}_${p.channelId}',
-          sourceId: sourceId,
-          title: p.title,
-          description: Value(p.description),
-          category: Value(p.category),
-          subtitle: Value(p.subtitle),
-          episodeNum: Value(p.episodeNum),
-          start: p.start,
-          stop: p.stop,
-        );
-      }).toList();
-      if (programmeCompanions.isNotEmpty) {
-        // Insert in batches of 5000 to avoid blocking the main thread
-        for (var i = 0; i < programmeCompanions.length; i += 5000) {
-          final end = (i + 5000).clamp(0, programmeCompanions.length);
-          await _db.insertEpgProgrammes(programmeCompanions.sublist(i, end));
-          // Yield to the event loop between batches
+
+      // Streamed parse + batched inserts: the feed is never materialized as a
+      // document nor as a list of every programme (see XmltvParser.parseStreaming).
+      final stats = await XmltvParser().parseBytesStreaming(
+        bytes,
+        sourceId: sourceId,
+        batchSize: insertBatchSize,
+        keepFrom: now.subtract(retentionPast),
+        keepUntil: now.add(retentionFuture),
+        onChannels: (channels) async {
+          await _db.upsertEpgChannels(channels.map((c) {
+            return db.EpgChannelsCompanion.insert(
+              id: '${sourceId}_${c.id}',
+              sourceId: sourceId,
+              channelId: c.id,
+              displayName: c.primaryName,
+              iconUrl: Value(c.iconUrl),
+            );
+          }).toList());
+        },
+        onProgrammes: (programmes) async {
+          await _db.insertEpgProgrammes(programmes.map((p) {
+            return db.EpgProgrammesCompanion.insert(
+              epgChannelId: '${sourceId}_${p.channelId}',
+              sourceId: sourceId,
+              title: p.title,
+              description: Value(p.description),
+              category: Value(p.category),
+              subtitle: Value(p.subtitle),
+              episodeNum: Value(p.episodeNum),
+              start: p.start,
+              stop: p.stop,
+            );
+          }).toList());
+          // Yield to the event loop between batches so the UI stays responsive
+          // and the batch becomes garbage as soon as it is written.
           await Future<void>.delayed(Duration.zero);
-        }
-      }
+        },
+      );
+      debugPrint('[EPG] Stored ${stats.programmes} programmes in '
+          '${stats.batches} batches (${stats.skipped} outside the window, '
+          '${stats.channels} channels) in ${stopwatch.elapsedMilliseconds} ms');
+
+      // Anything the previous refresh left outside the window (or older feeds)
+      // is dead weight for every guide query.
+      await _db.pruneProgrammes(
+        keepPast: retentionPast,
+        keepFuture: retentionFuture,
+      );
 
       // Update last refresh timestamp
       await _db.updateEpgSourceRefreshTime(sourceId);
@@ -161,21 +174,4 @@ final epgRefreshServiceProvider = Provider<EpgRefreshService>((ref) {
   return EpgRefreshService(ref.watch(databaseProvider));
 });
 
-/// Args for the background isolate (must be serializable).
-class _DecompressParseArgs {
-  final List<int> bytes;
-  final String sourceId;
-  const _DecompressParseArgs(this.bytes, this.sourceId);
-}
 
-/// Top-level function for compute() — runs decompression + XML parsing off the main thread.
-XmltvResult _decompressAndParse(_DecompressParseArgs args) {
-  List<int> decompressed;
-  try {
-    decompressed = gzip.decode(args.bytes);
-  } catch (_) {
-    decompressed = args.bytes;
-  }
-  final xmlContent = utf8.decode(decompressed, allowMalformed: true);
-  return XmltvParser().parse(xmlContent, sourceId: args.sourceId);
-}

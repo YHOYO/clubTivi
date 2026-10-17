@@ -4,28 +4,35 @@ import '../datasources/remote/tmdb_client.dart';
 import '../datasources/remote/debrid_service.dart';
 import '../datasources/remote/torrent_search_client.dart';
 import '../models/show.dart';
+import '../services/debrid_settings.dart';
 
 /// Combines Trakt, TMDB, debrid, and torrent search into a unified shows data source
 class ShowsRepository {
   final TraktClient? _trakt;
   final TmdbClient? _tmdb;
-  final DebridService? _debrid;
+
+  /// Servicios habilitados en orden de prioridad. Vacío = modo sin debrid.
+  final List<DebridService> _debridServices;
   final TorrentSearchClient _torrentSearch;
   final _log = Logger(printer: SimplePrinter());
 
   ShowsRepository({
     TraktClient? trakt,
     TmdbClient? tmdb,
-    DebridService? debrid,
+    List<DebridService> debridServices = const [],
     TorrentSearchClient? torrentSearch,
   })  : _trakt = trakt,
         _tmdb = tmdb,
-        _debrid = debrid,
+        _debridServices = List<DebridService>.unmodifiable(debridServices),
         _torrentSearch = torrentSearch ?? TorrentSearchClient();
 
   bool get hasTrakt => _trakt != null;
   bool get hasTmdb => _tmdb != null;
-  bool get hasDebrid => _debrid != null;
+  bool get hasDebrid => _debridServices.isNotEmpty;
+
+  /// Nombres de los servicios que resolverán, en orden de prioridad.
+  List<String> get debridServiceNames =>
+      [for (final service in _debridServices) service.serviceName];
 
   /// Get trending shows, enriched with TMDB posters
   Future<List<Show>> getTrendingShows({int page = 1, int limit = 20}) async {
@@ -244,22 +251,32 @@ class ShowsRepository {
       return [];
     }
 
-    // Sort by quality (best first)
-    torrents.sort((a, b) => b.qualityScore.compareTo(a.qualityScore));
+    // Sort by quality (best first). Se ordena una copia: la lista viene del
+    // cliente de búsqueda y no debe mutarse.
+    torrents = [...torrents]
+      ..sort((a, b) => b.qualityScore.compareTo(a.qualityScore));
 
-    // Step 2: Check debrid instant availability
+    // Step 2: Check debrid instant availability. Se prueba en orden de
+    // prioridad y se para en el primer servicio que conteste: no tiene sentido
+    // preguntar a los demás por los mismos hashes.
     Set<String> cachedHashes = {};
-    if (_debrid != null) {
+    String? cachedSource;
+    for (final service in _debridServices) {
       try {
         final hashes = torrents.map((t) => t.infoHash).toList();
-        final available = await _debrid.checkInstantAvailability(hashes);
+        final available = await service.checkInstantAvailability(hashes);
         cachedHashes = available.keys.toSet();
+        if (cachedHashes.isNotEmpty) cachedSource = service.serviceName;
+        break;
       } catch (e) {
-        _log.w('Debrid availability check failed: $e');
+        _log.w('${service.serviceName} availability check failed: $e');
       }
     }
 
-    // Step 3: Build stream list — cached first, then non-cached
+    // Step 3: Build stream list — cached first, then non-cached. Sin ningún
+    // servicio habilitado los torrents siguen visibles, pero marcados como no
+    // disponibles con el motivo, en vez de fallar al pulsar.
+    final debridEnabled = hasDebrid;
     final results = <ResolvedStream>[];
     for (final torrent in torrents) {
       final hashLower = torrent.infoHash.toLowerCase();
@@ -269,10 +286,12 @@ class ShowsRepository {
         filename: torrent.title.isNotEmpty ? torrent.title : torrent.name,
         quality: torrent.quality.isNotEmpty ? torrent.quality : null,
         filesize: null,
-        source: cached ? 'real-debrid ⚡' : 'torrent',
+        source: cached ? '${cachedSource ?? 'debrid'} ⚡' : 'torrent',
         isCached: cached,
         magnetUrl: torrent.magnetUrl,
         seeds: torrent.seeds,
+        unavailableReason:
+            debridEnabled ? null : kDebridRequiredReason,
       ));
       if (results.length >= 10) break;
     }
@@ -286,15 +305,34 @@ class ShowsRepository {
     return results;
   }
 
-  /// Resolve a specific torrent via Real-Debrid (add magnet → wait → stream URL)
+  /// Resolve a specific torrent through the enabled debrid services, in
+  /// priority order. Throws [DebridUnavailableException] when there is none.
   Future<ResolvedStream?> resolveMagnet(
     String magnetUrl, {
     void Function(String status, int progress)? onProgress,
   }) async {
-    if (_debrid == null) {
-      throw Exception('No Real-Debrid API key configured');
+    if (_debridServices.isEmpty) {
+      throw const DebridUnavailableException();
     }
-    return await _debrid.resolveFromMagnet(magnetUrl, onProgress: onProgress);
+
+    Object? lastError;
+    for (final service in _debridServices) {
+      try {
+        final resolved = await service.resolveFromMagnet(
+          magnetUrl,
+          onProgress: onProgress,
+        );
+        if (resolved != null && resolved.url.isNotEmpty) return resolved;
+      } catch (e) {
+        lastError = e;
+        _log.w('${service.serviceName} could not resolve magnet: $e');
+      }
+    }
+
+    if (lastError != null) {
+      throw Exception('Ningún servicio debrid pudo resolver el enlace: $lastError');
+    }
+    return null;
   }
 
   /// Enrich a list of shows with TMDB poster/backdrop URLs

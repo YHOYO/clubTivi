@@ -164,6 +164,11 @@ class ResolvedStream extends Equatable {
   final String? magnetUrl; // for non-cached torrents that need resolving
   final int? seeds;
 
+  /// Por qué esta fuente no se puede reproducir con la configuración actual
+  /// (por ejemplo, un torrent sin ningún servicio debrid habilitado). Null
+  /// cuando la fuente está disponible.
+  final String? unavailableReason;
+
   const ResolvedStream({
     required this.url,
     required this.filename,
@@ -173,7 +178,18 @@ class ResolvedStream extends Equatable {
     this.isCached = true,
     this.magnetUrl,
     this.seeds,
+    this.unavailableReason,
   });
+
+  /// Una URL directa se reproduce tal cual; un magnet solo si hay un servicio
+  /// debrid habilitado que lo resuelva.
+  bool get isAvailable {
+    if (url.isNotEmpty) return true;
+    return magnetUrl != null && magnetUrl!.isNotEmpty && unavailableReason == null;
+  }
+
+  /// True cuando reproduce sin depender de un servicio debrid.
+  bool get isDirect => url.isNotEmpty;
 
   String get filesizeDisplay {
     if (filesize == null) return '';
@@ -184,5 +200,5 @@ class ResolvedStream extends Equatable {
   }
 
   @override
-  List<Object?> get props => [url];
+  List<Object?> get props => [url, magnetUrl, unavailableReason];
 }
