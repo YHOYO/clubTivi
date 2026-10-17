@@ -4,6 +4,7 @@ import '../datasources/remote/tmdb_client.dart';
 import '../datasources/remote/debrid_service.dart';
 import '../datasources/remote/torrent_search_client.dart';
 import '../models/show.dart';
+import '../models/stream_source.dart';
 import '../services/debrid_settings.dart';
 
 /// Combines Trakt, TMDB, debrid, and torrent search into a unified shows data source
@@ -227,34 +228,33 @@ class ShowsRepository {
     }
   }
 
-  /// Find streams for a show/movie. Returns both cached (instant) and
-  /// non-cached torrent sources so the user can pick.
-  Future<List<ResolvedStream>> resolveStreams({
+  /// Find sources for a show/movie as the app-wide [StreamSource] type.
+  ///
+  /// Torrentio ya devuelve ese tipo; aquí solo se enriquece con la
+  /// disponibilidad del debrid habilitado y se marca el motivo cuando no hay
+  /// ninguno. El orden final lo decide `rankStreams` en la capa de providers,
+  /// para que este repositorio no dependa de preferencias de UI.
+  Future<List<StreamSource>> resolveStreams({
     required String imdbId,
     int? season,
     int? episode,
   }) async {
     // Step 1: Search for torrent hashes via Torrentio
-    List<TorrentResult> torrents;
+    final List<StreamSource> sources;
     if (season != null && episode != null) {
-      torrents = await _torrentSearch.searchEpisode(
+      sources = await _torrentSearch.searchEpisode(
         imdbId,
         season: season,
         episode: episode,
       );
     } else {
-      torrents = await _torrentSearch.searchMovie(imdbId);
+      sources = await _torrentSearch.searchMovie(imdbId);
     }
 
-    if (torrents.isEmpty) {
+    if (sources.isEmpty) {
       _log.w('No torrents found for $imdbId');
       return [];
     }
-
-    // Sort by quality (best first). Se ordena una copia: la lista viene del
-    // cliente de búsqueda y no debe mutarse.
-    torrents = [...torrents]
-      ..sort((a, b) => b.qualityScore.compareTo(a.qualityScore));
 
     // Step 2: Check debrid instant availability. Se prueba en orden de
     // prioridad y se para en el primer servicio que conteste: no tiene sentido
@@ -263,7 +263,11 @@ class ShowsRepository {
     String? cachedSource;
     for (final service in _debridServices) {
       try {
-        final hashes = torrents.map((t) => t.infoHash).toList();
+        final hashes = [
+          for (final source in sources)
+            if (source.infoHash != null && source.infoHash!.isNotEmpty)
+              source.infoHash!,
+        ];
         final available = await service.checkInstantAvailability(hashes);
         cachedHashes = available.keys.toSet();
         if (cachedHashes.isNotEmpty) cachedSource = service.serviceName;
@@ -273,34 +277,30 @@ class ShowsRepository {
       }
     }
 
-    // Step 3: Build stream list — cached first, then non-cached. Sin ningún
-    // servicio habilitado los torrents siguen visibles, pero marcados como no
-    // disponibles con el motivo, en vez de fallar al pulsar.
+    // Step 3: Enrich with debrid state. Sin ningún servicio habilitado los
+    // torrents siguen visibles, pero marcados como no disponibles con el
+    // motivo, en vez de fallar al pulsar.
     final debridEnabled = hasDebrid;
-    final results = <ResolvedStream>[];
-    for (final torrent in torrents) {
-      final hashLower = torrent.infoHash.toLowerCase();
-      final cached = cachedHashes.contains(hashLower);
-      results.add(ResolvedStream(
-        url: '', // resolved on-demand when user picks
-        filename: torrent.title.isNotEmpty ? torrent.title : torrent.name,
-        quality: torrent.quality.isNotEmpty ? torrent.quality : null,
-        filesize: null,
-        source: cached ? '${cachedSource ?? 'debrid'} ⚡' : 'torrent',
-        isCached: cached,
-        magnetUrl: torrent.magnetUrl,
-        seeds: torrent.seeds,
-        unavailableReason:
-            debridEnabled ? null : kDebridRequiredReason,
-      ));
-      if (results.length >= 10) break;
-    }
+    final results = <StreamSource>[];
+    for (final source in sources) {
+      final hash = source.infoHash?.toLowerCase() ?? '';
+      final cached = hash.isNotEmpty && cachedHashes.contains(hash);
 
-    // Sort: cached first, then by quality
-    results.sort((a, b) {
-      if (a.isCached != b.isCached) return a.isCached ? -1 : 1;
-      return 0;
-    });
+      var enriched = source;
+      if (cached) {
+        enriched = enriched.copyWith(
+          kind: SourceKind.debrid,
+          isCached: true,
+          providerName: '${cachedSource ?? 'debrid'} ⚡',
+        );
+      }
+      if (!debridEnabled) {
+        enriched = enriched.copyWith(
+          unavailableReason: kDebridRequiredReason,
+        );
+      }
+      results.add(enriched);
+    }
 
     return results;
   }
