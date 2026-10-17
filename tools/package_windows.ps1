@@ -45,7 +45,10 @@ param(
     [string] $UpdateRepo,
 
     # Reempaquetar la build que ya hay, sin compilar.
-    [switch] $SkipBuild
+    [switch] $SkipBuild,
+
+    # No incluir el motor P2P (rqbit) en el paquete.
+    [switch] $SkipRqbit
 )
 
 Set-StrictMode -Version Latest
@@ -129,6 +132,62 @@ $leeme = $leeme.Replace('@@VERSION@@', $Version).Replace('@@FECHA@@', (Get-Date)
     (New-Object System.Text.UTF8Encoding($true)))
 Copy-Item -LiteralPath (Join-Path $templates 'Crear acceso directo.bat') `
     -Destination (Join-Path $stage 'Crear acceso directo.bat') -Force
+
+# ─── Motor P2P (rqbit) ──────────────────────────────────────────────────────
+# El binario se guarda (una vez) en tools\rqbit y se copia junto a la app. Si
+# no se puede descargar, el paquete sigue siendo válido: la propia app lo baja
+# en el primer Play P2P y verifica el mismo SHA-256.
+if (-not $SkipRqbit) {
+    $rqbitVersion = '9.0.1'
+    $rqbitHash = '2ed683203beca628e0c45f62f99feeef4242cecc3444c8422dfe5b1b6aa38cea'
+    $rqbitUrl = "https://github.com/ikatson/rqbit/releases/download/v$rqbitVersion/rqbit.exe"
+    $rqbitDir = Join-Path $repoRoot 'tools\rqbit'
+    $rqbitExe = Join-Path $rqbitDir 'rqbit.exe'
+    if (-not (Test-Path $rqbitDir)) {
+        New-Item -ItemType Directory -Force -Path $rqbitDir | Out-Null
+    }
+
+    if (Test-Path $rqbitExe) {
+        $current = (Get-FileHash -LiteralPath $rqbitExe -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($current -ne $rqbitHash) {
+            Write-Note 'el rqbit.exe local no coincide con el hash esperado: se descarta y se vuelve a descargar.'
+            Remove-Item -LiteralPath $rqbitExe -Force
+        }
+    }
+
+    if (-not (Test-Path $rqbitExe)) {
+        Write-Step "Descargando el motor P2P (rqbit $rqbitVersion)"
+        $temporary = "$rqbitExe.download"
+        try {
+            Invoke-WebRequest -Uri $rqbitUrl -OutFile $temporary -UseBasicParsing
+            $downloaded = (Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($downloaded -ne $rqbitHash) {
+                throw "SHA-256 inesperado: $downloaded"
+            }
+            Move-Item -LiteralPath $temporary -Destination $rqbitExe -Force
+            Write-Note "verificado: $rqbitHash"
+        }
+        catch {
+            Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+            Write-Host "AVISO: no se pudo descargar rqbit ($_)" -ForegroundColor Yellow
+        }
+    }
+
+    if (Test-Path $rqbitExe) {
+        Copy-Item -LiteralPath $rqbitExe -Destination (Join-Path $stage 'rqbit.exe') -Force
+        $license = Join-Path $repoRoot 'packaging\rqbit\LICENSE'
+        if (-not (Test-Path $license)) { Fail "no encuentro la licencia del motor P2P: $license" }
+        Copy-Item -LiteralPath $license -Destination (Join-Path $stage 'rqbit-LICENSE.txt') -Force
+        $notice = Join-Path $repoRoot 'packaging\rqbit\NOTICE.txt'
+        if (Test-Path $notice) {
+            Copy-Item -LiteralPath $notice -Destination (Join-Path $stage 'rqbit-NOTICE.txt') -Force
+        }
+        Write-Note 'motor P2P incluido: rqbit.exe + rqbit-LICENSE.txt'
+    }
+    else {
+        Write-Note 'paquete sin rqbit.exe: la app lo descargará en el primer Play P2P.'
+    }
+}
 
 $zipName = "clubTivi-windows-x64-$Version.zip"
 $zipPath = Join-Path $OutputDir $zipName

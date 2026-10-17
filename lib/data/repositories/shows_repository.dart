@@ -9,6 +9,7 @@ import '../models/stremio_addon.dart';
 import '../models/stream_search_result.dart';
 import '../models/stream_source.dart';
 import '../services/debrid_settings.dart';
+import '../services/p2p/p2p_platform.dart';
 
 /// Combines Trakt, TMDB, debrid, and torrent search into a unified shows data source
 class ShowsRepository {
@@ -23,6 +24,9 @@ class ShowsRepository {
   /// intacta: solo Torrentio.
   final List<InstalledAddon> _stremioAddons;
   final StremioAddonClient _stremioClient;
+
+  /// Si esta plataforma puede ejecutar el motor P2P. Inyectable en tests.
+  final bool? _p2pSupported;
   final _log = Logger(printer: SimplePrinter());
 
   ShowsRepository({
@@ -32,12 +36,14 @@ class ShowsRepository {
     TorrentSearchClient? torrentSearch,
     List<InstalledAddon> stremioAddons = const [],
     StremioAddonClient? stremioClient,
+    bool? p2pSupported,
   })  : _trakt = trakt,
         _tmdb = tmdb,
         _debridServices = List<DebridService>.unmodifiable(debridServices),
         _torrentSearch = torrentSearch ?? TorrentSearchClient(),
         _stremioAddons = List<InstalledAddon>.unmodifiable(stremioAddons),
-        _stremioClient = stremioClient ?? StremioAddonClient();
+        _stremioClient = stremioClient ?? StremioAddonClient(),
+        _p2pSupported = p2pSupported;
 
   bool get hasTrakt => _trakt != null;
   bool get hasTmdb => _tmdb != null;
@@ -310,6 +316,7 @@ class ShowsRepository {
     // torrents siguen visibles, pero marcados como no disponibles con el
     // motivo, en vez de fallar al pulsar.
     final debridEnabled = hasDebrid;
+    final p2pEnabled = _p2pSupported ?? isP2pPlaybackSupported();
     final results = <StreamSource>[];
     for (final source in sources) {
       final hash = source.infoHash?.toLowerCase() ?? '';
@@ -323,9 +330,16 @@ class ShowsRepository {
           providerName: '${cachedSource ?? 'debrid'} ⚡',
         );
       }
-      if (!debridEnabled) {
+      // Sin debrid, un torrent con infoHash lo reproduce el motor P2P local;
+      // solo se marca el motivo cuando no hay ninguna vía de reproducción.
+      if (!debridEnabled && !enriched.isDirect) {
+        final playableP2p = p2pEnabled && hash.isNotEmpty;
         enriched = enriched.copyWith(
-          unavailableReason: kDebridRequiredReason,
+          unavailableReason: playableP2p
+              ? null
+              : (hash.isNotEmpty
+                  ? kP2pUnavailableReason
+                  : kDebridRequiredReason),
         );
       }
       results.add(enriched);

@@ -64,6 +64,12 @@ The headline feature that sets clubTivi apart. Group the same channel from multi
 - **Info overlay** — channel name, EPG now-playing, and provider shown on channel switch
 - **Multi-audio track support** — handles streams with multiple audio tracks (EAC-3, AAC, etc.)
 
+### 🧩 P2P Playback (no debrid needed)
+- **Built-in rqbit engine** — infoHash sources (Torrentio, any Stremio addon) play without a debrid service
+- **Local only** — the engine listens on `127.0.0.1`, starts on demand, restarts if it dies and shuts down with the app
+- **Range streaming** — playback starts while downloading; files land in `Downloads/clubTivi`
+- **Verified binary** — bundled in the portable ZIP, or downloaded on demand with SHA-256 check; see [docs/P2P_PLAYBACK.md](docs/P2P_PLAYBACK.md)
+
 ### 🚀 Performance
 - **Instant startup** — favorites and providers load first (Phase 0), everything else loads in background
 - **Phased loading** — splash screen → favorites → sidebar groups → EPG → full channel list
@@ -160,6 +166,7 @@ lib/
 - [x] Keyboard, gamepad, and remote control navigation
 - [x] Instant startup with phased loading
 - [x] Session persistence
+- [x] P2P torrent playback via a local rqbit engine (desktop)
 
 ### 🔜 Coming Next
 - [ ] Warm failover (background stream health monitoring)
@@ -168,6 +175,7 @@ lib/
 - [ ] Theming and customization
 - [ ] Backup/restore settings and Smart Channel configs
 - [ ] Multi-language support
+- [ ] P2P engine for macOS/Linux packaging (the same rqbit binary)
 - [ ] Web companion remote control
 
 ---

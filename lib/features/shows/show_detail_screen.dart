@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,6 +15,11 @@ import '../../data/models/language_preferences.dart';
 import '../../data/services/debrid_settings.dart';
 import '../../data/services/language_preferences_store.dart';
 import '../../data/services/stream_playback.dart';
+import '../../data/services/p2p/p2p_platform.dart';
+import '../../data/services/p2p/p2p_providers.dart';
+import '../../data/services/p2p/rqbit_engine.dart';
+import '../../data/services/p2p/rqbit_models.dart';
+import 'p2p_progress_dialog.dart';
 import 'shows_providers.dart';
 
 /// Detail screen for a show or movie — backdrop, info, seasons, episodes, play
@@ -559,6 +566,11 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
                             [
                               stream.providerName,
                               if (stream.seeds != null) '👤 ${stream.seeds}',
+                              // Un torrent sin debrid lo sirve el motor P2P local.
+                              if (available &&
+                                  stream.infoHash != null &&
+                                  !stream.isCached)
+                                'P2P',
                               if (!available)
                                 stream.unavailableReason ?? kDebridRequiredReason,
                             ].join(' • '),
@@ -832,8 +844,8 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
           Expanded(
             child: Text(
               unavailable == streams.length
-                  ? 'None of these sources can play without debrid. Enable a service to use them.'
-                  : '$unavailable of ${streams.length} sources need a debrid service.',
+                  ? 'None of these sources can play on this device. Enable a debrid service to use them.'
+                  : '$unavailable of ${streams.length} sources cannot play on this device.',
               style: const TextStyle(
                 color: Colors.orangeAccent,
                 fontSize: 12,
@@ -863,8 +875,11 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
         backgroundColor: const Color(0xFF1A1A2E),
         title: const Text('Source unavailable'),
         content: Text(
-          '$reason.\n\nEnable a debrid service in Settings → Debrid Services, '
-          'or pick another source.',
+          reason == kP2pUnavailableReason
+              ? '$reason.\n\nOpen this source in the desktop app, or pick '
+                  'another source.'
+              : '$reason.\n\nEnable a debrid service in Settings → Debrid '
+                  'Services, or pick another source.',
           style: const TextStyle(color: Colors.white70, height: 1.4),
         ),
         actions: [
@@ -895,6 +910,18 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
       _showUnavailable(stream);
       return;
     }
+
+    final repo = await ref.read(showsRepositoryProvider.future);
+    final infoHash = stream.infoHash;
+    final hasTorrent = infoHash != null && infoHash.isNotEmpty;
+    final p2pPossible = hasTorrent && isP2pPlaybackSupported();
+
+    // Sin debrid, un torrent con hash lo reproduce el motor P2P local.
+    if (p2pPossible && !repo.hasDebrid) {
+      await _playP2p(stream, title);
+      return;
+    }
+
     final magnet = stream.magnetUrl;
     if (magnet == null || magnet.isEmpty) {
       _showSnackbar('This source has no playable link');
@@ -903,7 +930,6 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     _showSnackbar(stream.isCached ? 'Preparing stream…' : 'Preparing stream — this may take a moment…');
     setState(() => _resolving = true);
     try {
-      final repo = await ref.read(showsRepositoryProvider.future);
       final resolved = await repo.resolveMagnet(
         magnet,
         onProgress: (status, progress) {
@@ -914,18 +940,131 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
         },
       );
       if (resolved == null || resolved.url.isEmpty) {
+        if (p2pPossible) {
+          _showSnackbar('Debrid could not resolve it — trying P2P…');
+          await _playP2p(stream, title);
+          return;
+        }
         _showSnackbar('Stream unavailable — try another source');
         return;
       }
       if (!mounted) return;
       _launchPlayer(resolved.url, title);
-    } on DebridUnavailableException catch (e) {
-      _showSnackbar(e.message);
+    } on DebridUnavailableException {
+      if (p2pPossible) {
+        await _playP2p(stream, title);
+        return;
+      }
+      _showSnackbar(kDebridRequiredReason);
     } catch (e) {
+      // Un debrid caído no debe impedir la reproducción si hay un hash: el
+      // motor P2P es la red de seguridad.
+      if (p2pPossible) {
+        _showSnackbar('Debrid failed — trying P2P…');
+        await _playP2p(stream, title);
+        return;
+      }
       _showSnackbar('$e');
     } finally {
       if (mounted) setState(() => _resolving = false);
     }
+  }
+
+  /// Arranca el motor P2P con una espera visible y errores accionables.
+  Future<void> _playP2p(StreamSource stream, String title) async {
+    final hash = stream.infoHash;
+    if (hash == null || hash.isEmpty) {
+      _showSnackbar('This source has no info hash for P2P playback');
+      return;
+    }
+    if (!isP2pPlaybackSupported()) {
+      _showSnackbar(kP2pUnavailableReason);
+      return;
+    }
+
+    setState(() => _resolving = true);
+    final progress = ValueNotifier<P2pProgress>(
+      const P2pProgress(P2pPhase.locatingEngine, 'Looking for the P2P engine…'),
+    );
+    final cancelled = ValueNotifier(false);
+    var dialogOpen = true;
+
+    void closeDialog() {
+      if (!dialogOpen || !mounted) return;
+      dialogOpen = false;
+      Navigator.of(context, rootNavigator: true).pop();
+    }
+
+    unawaited(showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => P2pProgressDialog(
+        progress: progress,
+        onCancel: () {
+          cancelled.value = true;
+          if (dialogOpen && mounted) {
+            dialogOpen = false;
+            Navigator.of(dialogContext).pop();
+          }
+        },
+      ),
+    ));
+
+    try {
+      final engine = await ref.read(rqbitEngineProvider.future);
+      final playback = await engine.prepare(
+        P2pStreamRequest(
+          infoHash: hash,
+          magnetUrl: stream.magnetUrl,
+          fileIndex: stream.fileIdx,
+          title: stream.title,
+        ),
+        onProgress: (value) => progress.value = value,
+        isCancelled: () => cancelled.value,
+      );
+      closeDialog();
+      // Si el usuario canceló justo cuando terminaba la preparación, no se
+      // abre el reproductor.
+      if (cancelled.value || !mounted) return;
+      _launchPlayer(playback.streamUrl.toString(), title);
+    } on P2pCancelledException {
+      closeDialog();
+    } catch (error) {
+      closeDialog();
+      if (!mounted) return;
+      _showP2pError(error);
+    } finally {
+      progress.dispose();
+      cancelled.dispose();
+      if (mounted) setState(() => _resolving = false);
+    }
+  }
+
+  void _showP2pError(Object error) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        title: const Text('P2P playback failed'),
+        content: Text(
+          p2pErrorMessage(error),
+          style: const TextStyle(color: Colors.white70, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              context.push('/debrid-services');
+            },
+            child: const Text('Use debrid instead'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _resolveAndDownload(StreamSource stream, String title) async {
@@ -937,6 +1076,14 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
       _showUnavailable(stream);
       return;
     }
+    final repo = await ref.read(showsRepositoryProvider.future);
+    final infoHash = stream.infoHash;
+    if (!repo.hasDebrid && infoHash != null && infoHash.isNotEmpty) {
+      _showSnackbar(
+        'P2P sources download while you play; the file is saved in Downloads/clubTivi',
+      );
+      return;
+    }
     final magnet = stream.magnetUrl;
     if (magnet == null || magnet.isEmpty) {
       _showSnackbar('This source has no downloadable link');
@@ -945,7 +1092,6 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     _showSnackbar(stream.isCached ? 'Preparing download…' : 'Preparing download — this may take a moment…');
     setState(() => _resolving = true);
     try {
-      final repo = await ref.read(showsRepositoryProvider.future);
       final resolved = await repo.resolveMagnet(
         magnet,
         onProgress: (status, progress) {

@@ -49,3 +49,7 @@ flutter_02.png
 
 # Local verification fixtures (generated, not part of the repo)
 .dev/
+
+# Motor P2P descargado por tools/package_windows.ps1 y cachés de desarrollo
+/tools/rqbit/
+/.cache/

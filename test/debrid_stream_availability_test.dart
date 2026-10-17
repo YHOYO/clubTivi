@@ -11,6 +11,7 @@ import 'package:clubtivi/data/models/show.dart';
 import 'package:clubtivi/data/models/stream_source.dart';
 import 'package:clubtivi/data/repositories/shows_repository.dart';
 import 'package:clubtivi/data/services/debrid_settings.dart';
+import 'package:clubtivi/data/services/p2p/p2p_platform.dart';
 import 'package:clubtivi/features/shows/shows_providers.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -110,10 +111,12 @@ void main() {
   ShowsRepository repository({
     List<DebridService> debrid = const [],
     List<StreamSource> sources = const [_torrentSource],
+    bool p2pSupported = true,
   }) {
     return ShowsRepository(
       debridServices: debrid,
       torrentSearch: _FakeTorrentSearch(sources),
+      p2pSupported: p2pSupported,
     );
   }
 
@@ -122,18 +125,24 @@ void main() {
   Future<List<StreamSource>> sourcesOf(ShowsRepository repo) async =>
       (await repo.resolveStreams(imdbId: 'tt1234567')).sources;
 
-  test('sin debrid los torrents se listan como no disponibles con motivo',
-      () async {
+  test('sin debrid un torrent con hash queda disponible por P2P', () async {
     final streams = await sourcesOf(repository());
 
     expect(streams, hasLength(1));
     final source = streams.single;
-    expect(source.isAvailable, isFalse);
-    expect(source.unavailableReason, kDebridRequiredReason);
+    expect(source.isAvailable, isTrue);
+    expect(source.unavailableReason, isNull);
     expect(source.locator, StreamLocator.magnet);
     expect(source.providerName, 'torrent');
     expect(source.kind, SourceKind.torrent);
     expect(source.audioLanguages, {kLanguageSpanishLatin});
+  });
+
+  test('sin debrid ni motor P2P el torrent explica el motivo', () async {
+    final streams = await sourcesOf(repository(p2pSupported: false));
+
+    expect(streams.single.isAvailable, isFalse);
+    expect(streams.single.unavailableReason, kP2pUnavailableReason);
   });
 
   test('con debrid habilitado los torrents quedan disponibles', () async {

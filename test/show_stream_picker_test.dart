@@ -43,6 +43,21 @@ const _torrentStream = StreamSource(
   unavailableReason: kDebridRequiredReason,
 );
 
+/// Torrent disponible sin debrid: lo reproducirá el motor P2P local.
+const _p2pStream = StreamSource(
+  id: 'torrentio:08ada5a7a6183aae1e09d831df6748d566095a10:5',
+  providerId: 'torrentio',
+  providerName: 'torrent',
+  kind: SourceKind.torrent,
+  title: 'Test.Movie.1080p.WEB-DL',
+  quality: '1080p',
+  infoHash: '08ada5a7a6183aae1e09d831df6748d566095a10',
+  fileIdx: 5,
+  magnetUrl:
+      'magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Test',
+  seeds: 30,
+);
+
 const _latinoStream = StreamSource(
   id: 'addon:latino',
   providerId: 'addon',
@@ -174,6 +189,22 @@ void main() {
     await tester.tap(find.text('Open Settings'));
     await tester.pumpAndSettle();
     expect(find.text('DEBRID SETTINGS'), findsOneWidget);
+  });
+
+  testWidgets('un torrent sin debrid se anuncia como P2P y no bloquea la lista',
+      (tester) async {
+    await pumpScreen(tester, const [_p2pStream]);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Play'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('P2P'), findsOneWidget);
+    expect(
+      find.textContaining('cannot play on this device'),
+      findsNothing,
+      reason: 'el aviso de no disponible no aparece con motor P2P',
+    );
   });
 
   testWidgets('un addon caído se explica junto a las fuentes que sí llegaron',

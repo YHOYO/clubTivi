@@ -34,17 +34,28 @@ QUÉ HACE
   - Comprobación de canales: dice cuáles responden de verdad antes de abrirlos,
     sin salir de la lista y sin abrir el reproductor.
   - Reproductor integrado (mpv) con failover entre streams alternativos.
+  - Reproducción P2P de torrents sin debrid (motor rqbit incluido).
 
 CONTENIDO
   clubtivi.exe ..................... la aplicación
   data\ ............................ código compilado y recursos de Flutter
   libmpv-2.dll ..................... reproductor de vídeo
   sqlite3.dll ...................... base de datos
+  rqbit.exe ........................ motor P2P (rqbit, Apache-2.0)
+  rqbit-LICENSE.txt ................ licencia del motor P2P
   Crear acceso directo.bat ......... crea el acceso directo del escritorio
   LEEME.txt ........................ este fichero
 
   El zip que contiene esta carpeta viene con su SHA-256 en SHA256SUMS.txt, en
   la misma carpeta donde lo descargaste (o el que publica la release).
+
+REPRODUCCIÓN P2P (SIN DEBRID)
+  Las fuentes con infoHash se reproducen con el motor rqbit que va en esta
+  carpeta: arranca solo al pulsar Play en una fuente P2P, escucha únicamente
+  en 127.0.0.1 y se cierra al salir de la aplicación. Lo que descarga queda en
+  Descargas\clubTivi. Si rqbit.exe no estuviera en esta carpeta, la aplicación
+  se lo descarga de la release oficial (github.com/ikatson/rqbit) y comprueba
+  su SHA-256 antes de ejecutarlo. No hace falta ningún servicio debrid.
 
 SIN FIRMA DIGITAL
   El ejecutable no está firmado con un certificado de código, así que Windows
