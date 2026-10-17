@@ -8,6 +8,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import 'adaptive_buffer.dart';
 import 'buffer_progress.dart';
+import 'media_proxy.dart';
 import 'stream_proxy.dart';
 import '../../data/services/channel_history_service.dart';
 import '../../data/services/stream_alternatives_service.dart';
@@ -61,11 +62,23 @@ class PlayerService {
   /// vacío y el monitor se quedaba sin ninguna señal).
   double? _lastTimePos;
   int _stagnantTicks = 0;
+
+  // Dos proxies con trabajos distintos: ffmpeg para el arreglo de códec y
+  // [MediaProxy] para las fuentes de addon que exigen cabeceras. Nunca sirven
+  // la misma URL a la vez: mientras el proxy de cabeceras está activo, el
+  // reintento por ffmpeg no se arranca (sus peticiones no llevarían las
+  // cabeceras del addon, solo las del canal).
   final StreamProxy _streamProxy = StreamProxy();
+  final MediaProxy _mediaProxy = MediaProxy();
   bool _proxyActive = false;
 
   /// Whether the ffmpeg fallback has already been tried for the current stream.
   bool _formatRetryDone = false;
+
+  /// Descarta reproducciones que quedaron a medias cuando el usuario cambia de
+  /// canal o detiene la reproducción antes de que arranque el proxy.
+  int _playbackGeneration = 0;
+  Future<void> _playQueue = Future<void>.value();
 
   // ── Warm failover: background pre-buffer player ──
   Player? _warmPlayer;
@@ -179,6 +192,13 @@ class PlayerService {
   List<String>? _failoverGroupUrls;
 
   /// Start playing a stream URL with optional channel metadata for failover.
+  ///
+  /// [headers] y [needsProxy] vienen de la fuente elegida: si traen algo, la
+  /// URL que abre mpv es la del proxy local, que reenvía las cabeceras al
+  /// origen. Sin cabeceras la reproducción sigue siendo directa.
+  ///
+  /// Las reproducciones se encolan: cambiar de canal con el D-pad puede solapar
+  /// dos llamadas y el proxy no puede quedar con el puerto de la anterior.
   Future<void> play(String url, {
     String? channelId,
     String? epgChannelId,
@@ -188,7 +208,43 @@ class PlayerService {
     String? originalName,
     List<String>? failoverGroupUrls,
     Map<String, String>? httpHeaders,
+    Map<String, String> headers = const {},
+    bool needsProxy = false,
+  }) {
+    final generation = _playbackGeneration;
+    final request = _playQueue.then((_) => _play(
+          url,
+          generation: generation,
+          channelId: channelId,
+          epgChannelId: epgChannelId,
+          tvgId: tvgId,
+          channelName: channelName,
+          vanityName: vanityName,
+          originalName: originalName,
+          failoverGroupUrls: failoverGroupUrls,
+          httpHeaders: httpHeaders,
+          headers: headers,
+          needsProxy: needsProxy,
+        ));
+    _playQueue = request.then((_) {}, onError: (_) {});
+    return request;
+  }
+
+  Future<void> _play(
+    String url, {
+    required int generation,
+    String? channelId,
+    String? epgChannelId,
+    String? tvgId,
+    String? channelName,
+    String? vanityName,
+    String? originalName,
+    List<String>? failoverGroupUrls,
+    Map<String, String>? httpHeaders,
+    Map<String, String> headers = const {},
+    bool needsProxy = false,
   }) async {
+    if (generation != _playbackGeneration) return;
     _httpHeaders = httpHeaders ?? const {};
     _isBuffering = false;
     _bufferStartTime = null;
@@ -218,9 +274,26 @@ class PlayerService {
     _formatRetryDone = false;
     _bufferProgress.begin();
     await _streamProxy.stop();
+    await _mediaProxy.stop();
+    if (generation != _playbackGeneration) return;
+
+    var playbackUrl = url;
+    if (headers.isNotEmpty || needsProxy) {
+      final proxied = await _mediaProxy.start(url, headers: headers);
+      if (proxied != null) {
+        playbackUrl = proxied;
+        _proxyActive = true;
+        debugPrint('[Player] Reproduciendo vía proxy de cabeceras: $proxied');
+      } else {
+        debugPrint('[Player] Proxy de cabeceras no disponible: $url');
+      }
+      if (generation != _playbackGeneration) return;
+    }
+
     await _ensureReady();
+    if (generation != _playbackGeneration) return;
     await _applyHttpHeaders();
-    await player.open(Media(url));
+    await player.open(Media(playbackUrl));
     await _bufferManager.applyForStream(url, this);
     await player.setVolume(100.0);
 
@@ -393,9 +466,13 @@ class PlayerService {
   Stream<int> get audioTrackCountStream =>
       player.stream.tracks.map((t) => t.audio.length);
 
-  /// Stop playback.
+  /// Stop playback and release the local proxies.
   Future<void> stop() async {
+    _playbackGeneration++;
     _bufferManager.stop();
+    _proxyActive = false;
+    await _mediaProxy.stop();
+    await _streamProxy.stop();
     await player.stop();
   }
 
@@ -684,8 +761,10 @@ class PlayerService {
 
       // Switch main player to the pre-buffered URL
       _currentUrl = newUrl;
+      _playbackGeneration++;
       _proxyActive = false;
       await _streamProxy.stop();
+      await _mediaProxy.stop();
       await player.open(Media(newUrl));
       await _bufferManager.applyForStream(newUrl, this);
       _startFailoverMonitor();
@@ -710,8 +789,10 @@ class PlayerService {
     _failoverCheckTimer?.cancel();
     _disposeWarmPlayer();
     _currentUrl = newUrl;
+    _playbackGeneration++;
     _proxyActive = false;
     await _streamProxy.stop();
+    await _mediaProxy.stop();
     await player.open(Media(newUrl));
     await _bufferManager.applyForStream(newUrl, this);
     _startFailoverMonitor();
@@ -722,6 +803,7 @@ class PlayerService {
   }
 
   void dispose() {
+    _playbackGeneration++;
     _bufferManager.stop();
     _bufferProgress.dispose();
     _tracksSub?.cancel();
@@ -733,6 +815,7 @@ class PlayerService {
     _disposeWarmPlayer();
     _healthTracker?.save();
     _streamProxy.stop();
+    _mediaProxy.stop();
     _player?.dispose();
   }
 }

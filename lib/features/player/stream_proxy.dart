@@ -9,6 +9,11 @@ import 'package:flutter/foundation.dart';
 /// MPEG-TS codec tag 0x0087. System ffmpeg (7.x) handles this correctly.
 /// This proxy pipes the stream through system ffmpeg with `-c copy` (no
 /// transcoding) and serves it on a local HTTP port for mpv to play.
+///
+/// Se conserva solo para ese arreglo de códec: una fuente que exige cabeceras
+/// HTTP (o marcó `notWebReady`) se sirve con `MediaProxy`, y este proxy no se
+/// arranca entonces —ffmpeg no reenviaría `Referer`/`User-Agent`—, así que las
+/// dos rutas nunca compiten por la misma URL.
 class StreamProxy {
   HttpServer? _server;
   Process? _ffmpeg;

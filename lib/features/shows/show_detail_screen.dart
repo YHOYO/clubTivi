@@ -10,6 +10,7 @@ import '../../data/models/show.dart';
 import '../../data/models/stream_search_result.dart';
 import '../../data/models/stream_source.dart';
 import '../../data/services/debrid_settings.dart';
+import '../../data/services/stream_playback.dart';
 import 'shows_providers.dart';
 
 /// Detail screen for a show or movie — backdrop, info, seasons, episodes, play
@@ -717,9 +718,10 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
   }
 
   Future<void> _resolveAndPlay(StreamSource stream, String title) async {
-    // Una URL directa no depende de debrid: se reproduce tal cual.
+    // Una URL directa no depende de debrid: se reproduce tal cual, con las
+    // cabeceras que exija el origen.
     if (stream.isDirect) {
-      _launchPlayer(stream.url!, title);
+      _launchPlayer(stream.url!, title, source: stream);
       return;
     }
     if (!stream.isAvailable) {
@@ -833,7 +835,10 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     );
   }
 
-  void _launchPlayer(String url, String title) {
+  /// Abre el reproductor. [source] solo se pasa cuando la URL es la directa del
+  /// addon: un enlace resuelto por debrid ya no necesita las cabeceras del
+  /// origen original.
+  void _launchPlayer(String url, String title, {StreamSource? source}) {
     debugPrint('[Shows] Launching player: url=$url, title=$title');
     if (url.isEmpty) {
       _showSnackbar('Stream URL is empty — try another source');
@@ -843,6 +848,8 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
       'streamUrl': url,
       'channelName': title,
       'channelLogo': widget.initialShow?.posterUrl ?? '',
+      'headers': playbackHeaders(source),
+      'needsProxy': shouldProxyStream(source),
     });
   }
 

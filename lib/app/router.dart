@@ -62,6 +62,11 @@ GoRouter createRouter() {
           streamUrl: extra['streamUrl'] as String? ?? '',
           channelName: extra['channelName'] as String? ?? '',
           channelLogo: extra['channelLogo'] as String?,
+          headers: (extra['headers'] as Map?)
+                  ?.map((key, value) =>
+                      MapEntry(key.toString(), value.toString())) ??
+              const {},
+          needsProxy: extra['needsProxy'] as bool? ?? false,
           alternativeUrls:
               (extra['alternativeUrls'] as List<String>?) ?? const [],
           channels:
