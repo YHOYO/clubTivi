@@ -1,0 +1,49 @@
+{
+  "streams": [
+    {
+      "name": "AIOStreams\n1080p",
+      "title": "Big Buck Bunny 2008 1080p WEB-DL Latino\n👤 87 💾 2.10 GB",
+      "url": "https://streams.example-cdn.net/big-buck-bunny/1080p/master.m3u8",
+      "behaviorHints": {
+        "notWebReady": true,
+        "filename": "Big.Buck.Bunny.2008.1080p.WEB-DL.Latino.mkv",
+        "proxyHeaders": {
+          "request": {
+            "Referer": "https://example-cdn.net/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+          },
+          "response": {
+            "Access-Control-Allow-Origin": "*"
+          }
+        },
+        "videoSize": 2254857830
+      },
+      "subtitles": [
+        {
+          "id": "sub-es-1",
+          "url": "https://subs.example-cdn.net/big-buck-bunny/es.srt",
+          "lang": "spa"
+        },
+        {
+          "id": "sub-en-1",
+          "url": "https://subs.example-cdn.net/big-buck-bunny/en.srt",
+          "lang": "eng"
+        }
+      ]
+    },
+    {
+      "name": "AIOStreams\n4K",
+      "title": "Big Buck Bunny 2008 2160p HDR\n👤 12 💾 14.30 GB",
+      "url": "https://streams.example-cdn.net/big-buck-bunny/2160p/index.m3u8",
+      "behaviorHints": {
+        "notWebReady": true,
+        "filename": "Big.Buck.Bunny.2008.2160p.HDR.mkv",
+        "proxyHeaders": {
+          "request": {
+            "Referer": "https://example-cdn.net/streaming"
+          }
+        }
+      }
+    }
+  ]
+}

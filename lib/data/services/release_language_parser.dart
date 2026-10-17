@@ -1,13 +1,47 @@
 /// Extrae idiomas de audio y subtítulos de un nombre de release.
 ///
 /// Es deliberadamente conservador: solo marca un idioma cuando el nombre lo
-/// declara (`LATINO`, `Castellano`, `MULTI`, `VOSE`…). No asume inglés por
-/// defecto, para no inventar preferencias donde no hay datos.
+/// declara (`LATINO`, `Castellano`, `MULTI`, `VOSE`…) o cuando el addon lo
+/// publica como bandera (`🇬🇧 / 🇷🇺`, que es como Torrentio informa de los
+/// idiomas). No asume inglés por defecto, para no inventar preferencias donde
+/// no hay datos.
 ///
 /// Lógica pura: sin Flutter ni red.
 library;
 
 import '../models/language_preferences.dart';
+
+/// Banderas de país/región → idioma, tal y como las usan los addons. El mapa
+/// no pretende ser exhaustivo: solo cubre lo que aparece en los payloads.
+const Map<String, String> _flagLanguages = {
+  '🇬🇧': kLanguageEnglish,
+  '🇺🇸': kLanguageEnglish,
+  '🇦🇺': kLanguageEnglish,
+  '🇨🇦': kLanguageEnglish,
+  '🇪🇸': kLanguageSpanish,
+  '🇲🇽': kLanguageSpanishLatin,
+  '🇦🇷': kLanguageSpanishLatin,
+  '🇨🇴': kLanguageSpanishLatin,
+  '🇨🇱': kLanguageSpanishLatin,
+  '🇵🇪': kLanguageSpanishLatin,
+  '🇻🇪': kLanguageSpanishLatin,
+  '🇷🇺': 'ru',
+  '🇵🇹': 'pt',
+  '🇧🇷': 'pt',
+  '🇫🇷': 'fr',
+  '🇩🇪': 'de',
+  '🇮🇹': 'it',
+  '🇯🇵': 'ja',
+  '🇰🇷': 'ko',
+  '🇨🇳': 'zh',
+  '🇮🇳': 'hi',
+  '🇹🇷': 'tr',
+  '🇵🇱': 'pl',
+  '🇳🇱': 'nl',
+  '🇸🇪': 'sv',
+  '🇺🇦': 'uk',
+  '🇸🇦': 'ar',
+};
 
 class ReleaseLanguages {
   final Set<String> audio;
@@ -52,6 +86,11 @@ class ReleaseLanguageParser {
     // ranking pueda preferir el que corresponda.
     if (_multi.hasMatch(text)) {
       audio.addAll([kLanguageSpanish, kLanguageEnglish]);
+    }
+
+    // Banderas: un addon puede publicar los idiomas así en vez de con palabras.
+    for (final entry in _flagLanguages.entries) {
+      if (release.contains(entry.key)) audio.add(entry.value);
     }
 
     if (_subtitled.hasMatch(text)) {

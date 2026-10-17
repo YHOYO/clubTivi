@@ -71,9 +71,10 @@ void main() {
 
     const params = StreamResolveParams('tt1234567');
     container.listen(resolveStreamProvider(params), (_, _) {});
-    final sources = await container.read(resolveStreamProvider(params).future);
+    final result = await container.read(resolveStreamProvider(params).future);
 
-    expect(sources.map((s) => s.id).toList(), ['english', 'latino']);
+    expect(result.sources.map((s) => s.id).toList(), ['english', 'latino']);
+    expect(result.failures, isEmpty, reason: 'sin addons no hay fallos');
   });
 
   test('la pantalla recibe como máximo 10 fuentes', () async {
@@ -97,9 +98,9 @@ void main() {
 
     const params = StreamResolveParams('tt1234567');
     container.listen(resolveStreamProvider(params), (_, _) {});
-    final sources = await container.read(resolveStreamProvider(params).future);
+    final result = await container.read(resolveStreamProvider(params).future);
 
-    expect(sources, hasLength(10));
-    expect(sources.first.id, 's12', reason: 'más seeds primero');
+    expect(result.sources, hasLength(10));
+    expect(result.sources.first.id, 's12', reason: 'más seeds primero');
   });
 }

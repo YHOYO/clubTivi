@@ -39,6 +39,17 @@ void main() {
       audio: <String>{},
       subtitles: <String>{},
     ),
+    (
+      // Forma real de Torrentio: los idiomas viajan como banderas.
+      release: 'Big Buck Bunny 3D [2008 BDRemux 1080p]\n👤 3 💾 2.32 GB 🇬🇧 / 🇷🇺',
+      audio: {kLanguageEnglish, 'ru'},
+      subtitles: <String>{},
+    ),
+    (
+      release: 'Película 1080p WEB-DL 🇲🇽',
+      audio: {kLanguageSpanishLatin},
+      subtitles: <String>{},
+    ),
   ];
 
   for (final testCase in cases) {

@@ -17,6 +17,7 @@ import '../../data/services/app_update_service.dart';
 import '../../data/services/backup_service.dart';
 import '../../data/services/debrid_settings.dart';
 import '../../data/services/release_checksum.dart';
+import '../../data/services/stremio_addon_settings.dart';
 import '../../data/services/epg_refresh_service.dart';
 import '../providers/provider_manager.dart';
 import '../remote/web_remote_server.dart';
@@ -1073,6 +1074,7 @@ class _ShowsApiKeysSectionState extends ConsumerState<_ShowsApiKeysSection> {
     final debrid = ref.watch(debridSettingsProvider);
     final configured = debrid.configuredCount;
     final enabled = debrid.enabledCount;
+    final addons = ref.watch(stremioAddonSettingsProvider);
 
     return _SettingsSection(
       title: 'Shows & Movies',
@@ -1133,6 +1135,27 @@ class _ShowsApiKeysSectionState extends ConsumerState<_ShowsApiKeysSection> {
           ),
           trailing: const Icon(Icons.chevron_right),
           onTap: () => context.push('/debrid-services'),
+        ),
+        ListTile(
+          leading: const Icon(Icons.extension_rounded),
+          title: const Text('Stremio Addons'),
+          subtitle: Text(
+            !addons.hasAddons
+                ? 'None installed — only Torrentio is queried'
+                : addons.enabledCount == 0
+                    ? '${addons.count} installed • all disabled'
+                    : '${addons.enabledCount} of ${addons.count} enabled',
+            style: TextStyle(
+              fontSize: 12,
+              color: addons.enabledCount > 0
+                  ? Colors.green
+                  : addons.hasAddons
+                      ? Colors.orangeAccent
+                      : Colors.white38,
+            ),
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/stremio-addons'),
         ),
       ],
     );
