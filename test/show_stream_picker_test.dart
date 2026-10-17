@@ -2,6 +2,7 @@
 // directa debe abrir el reproductor sin depender de debrid, y un torrent sin
 // debrid debe explicar el motivo en vez de fallar.
 import 'package:clubtivi/data/models/show.dart';
+import 'package:clubtivi/data/models/stream_source.dart';
 import 'package:clubtivi/data/services/debrid_settings.dart';
 import 'package:clubtivi/features/shows/show_detail_screen.dart';
 import 'package:clubtivi/features/shows/shows_providers.dart';
@@ -19,19 +20,23 @@ const _movie = Show(
   type: ShowType.movie,
 );
 
-const _directStream = ResolvedStream(
+const _directStream = StreamSource(
+  id: 'addon:1',
+  providerId: 'addon',
+  providerName: 'addon',
+  kind: SourceKind.addon,
+  title: 'Test.Movie.1080p.m3u8',
   url: 'https://example.com/movie.m3u8',
-  filename: 'Test.Movie.1080p.m3u8',
   quality: '1080p',
-  source: 'addon',
 );
 
-const _torrentStream = ResolvedStream(
-  url: '',
-  filename: 'Test.Movie.1080p.WEB-DL',
+const _torrentStream = StreamSource(
+  id: 'torrentio:abcdef0123456789abcdef0123456789abcdef01:0',
+  providerId: 'torrentio',
+  providerName: 'torrent',
+  kind: SourceKind.torrent,
+  title: 'Test.Movie.1080p.WEB-DL',
   quality: '1080p',
-  source: 'torrent',
-  isCached: false,
   magnetUrl: 'magnet:?xt=urn:btih:ABCDEF0123456789ABCDEF0123456789ABCDEF01',
   unavailableReason: kDebridRequiredReason,
 );
@@ -43,7 +48,7 @@ void main() {
 
   Future<Map<String, dynamic>? Function()> pumpScreen(
     WidgetTester tester,
-    List<ResolvedStream> streams,
+    List<StreamSource> streams,
   ) async {
     Map<String, dynamic>? playerExtra;
 

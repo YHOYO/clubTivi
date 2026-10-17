@@ -1,12 +1,14 @@
 // Sin ningún servicio debrid habilitado la app debe seguir funcionando: las
 // fuentes directas se reproducen y los torrents se marcan como no disponibles
-// con un motivo, en vez de fallar al pulsar.
+// con un motivo, en vez de fallar al pulsar. Ahora todo pasa por StreamSource.
 import 'dart:convert';
 
-import 'package:clubtivi/data/datasources/remote/debrid_service.dart';
 import 'package:clubtivi/data/datasources/remote/debrid_client.dart';
+import 'package:clubtivi/data/datasources/remote/debrid_service.dart';
 import 'package:clubtivi/data/datasources/remote/torrent_search_client.dart';
+import 'package:clubtivi/data/models/language_preferences.dart';
 import 'package:clubtivi/data/models/show.dart';
+import 'package:clubtivi/data/models/stream_source.dart';
 import 'package:clubtivi/data/repositories/shows_repository.dart';
 import 'package:clubtivi/data/services/debrid_settings.dart';
 import 'package:clubtivi/features/shows/shows_providers.dart';
@@ -17,13 +19,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 class _FakeTorrentSearch extends TorrentSearchClient {
   _FakeTorrentSearch(this.results);
 
-  final List<TorrentResult> results;
+  final List<StreamSource> results;
 
   @override
-  Future<List<TorrentResult>> searchMovie(String imdbId) async => results;
+  Future<List<StreamSource>> searchMovie(String imdbId) async => results;
 
   @override
-  Future<List<TorrentResult>> searchEpisode(
+  Future<List<StreamSource>> searchEpisode(
     String imdbId, {
     required int season,
     required int episode,
@@ -82,13 +84,20 @@ class _FakeDebrid implements DebridService {
   Future<bool> verifyToken() async => true;
 }
 
-const _torrent = TorrentResult(
-  title: 'Movie.2024.1080p.WEB-DL',
-  name: 'Movie.2024.1080p.WEB-DL',
-  infoHash: 'ABCDEF0123456789ABCDEF0123456789ABCDEF01',
+const _infoHash = 'ABCDEF0123456789ABCDEF0123456789ABCDEF01';
+
+const _torrentSource = StreamSource(
+  id: 'torrentio:abcdef0123456789abcdef0123456789abcdef01:0',
+  providerId: 'torrentio',
+  providerName: 'torrent',
+  kind: SourceKind.torrent,
+  title: 'Movie.2024.1080p.WEB-DL.Latino',
+  infoHash: _infoHash,
+  magnetUrl: 'magnet:?xt=urn:btih:$_infoHash',
   quality: '1080p',
+  sizeBytes: 4 * 1024 * 1024 * 1024,
   seeds: 42,
-  magnetUrl: 'magnet:?xt=urn:btih:ABCDEF0123456789ABCDEF0123456789ABCDEF01',
+  audioLanguages: {kLanguageSpanishLatin},
 );
 
 void main() {
@@ -100,11 +109,11 @@ void main() {
 
   ShowsRepository repository({
     List<DebridService> debrid = const [],
-    List<TorrentResult> torrents = const [_torrent],
+    List<StreamSource> sources = const [_torrentSource],
   }) {
     return ShowsRepository(
       debridServices: debrid,
-      torrentSearch: _FakeTorrentSearch(torrents),
+      torrentSearch: _FakeTorrentSearch(sources),
     );
   }
 
@@ -113,10 +122,13 @@ void main() {
     final streams = await repository().resolveStreams(imdbId: 'tt1234567');
 
     expect(streams, hasLength(1));
-    expect(streams.single.isAvailable, isFalse);
-    expect(streams.single.unavailableReason, kDebridRequiredReason);
-    expect(streams.single.magnetUrl, isNotEmpty);
-    expect(streams.single.source, 'torrent');
+    final source = streams.single;
+    expect(source.isAvailable, isFalse);
+    expect(source.unavailableReason, kDebridRequiredReason);
+    expect(source.locator, StreamLocator.magnet);
+    expect(source.providerName, 'torrent');
+    expect(source.kind, SourceKind.torrent);
+    expect(source.audioLanguages, {kLanguageSpanishLatin});
   });
 
   test('con debrid habilitado los torrents quedan disponibles', () async {
@@ -130,12 +142,16 @@ void main() {
   test('marca como cacheados los hashes del servicio en orden de prioridad',
       () async {
     final streams = await repository(debrid: [
-      _FakeDebrid(name: 'Second', cached: {_torrent.infoHash.toLowerCase()}),
+      _FakeDebrid(name: 'Second', cached: {_infoHash.toLowerCase()}),
     ]).resolveStreams(imdbId: 'tt1234567');
 
-    expect(streams.single.isCached, isTrue);
-    expect(streams.single.source, contains('Second'));
-    expect(streams.single.isAvailable, isTrue);
+    final source = streams.single;
+    expect(source.isCached, isTrue);
+    expect(source.kind, SourceKind.debrid);
+    expect(source.providerName, contains('Second'));
+    expect(source.isAvailable, isTrue);
+    expect(source.sizeBytes, 4 * 1024 * 1024 * 1024,
+        reason: 'enriquecer con debrid no pierde los metadatos');
   });
 
   test('si el primer servicio falla al consultar, sigue disponible', () async {
@@ -148,22 +164,26 @@ void main() {
   });
 
   test('una URL directa se reproduce sin debrid', () async {
-    const stream = ResolvedStream(
+    const source = StreamSource(
+      id: 'addon:1',
+      providerId: 'addon',
+      providerName: 'direct',
+      kind: SourceKind.addon,
+      title: 'movie.m3u8',
       url: 'https://example.com/movie.m3u8',
-      filename: 'movie.m3u8',
-      source: 'direct',
     );
 
-    expect(stream.isDirect, isTrue);
-    expect(stream.isAvailable, isTrue);
-    expect(stream.unavailableReason, isNull);
+    expect(source.isDirect, isTrue);
+    expect(source.locator, StreamLocator.url);
+    expect(source.isAvailable, isTrue);
+    expect(source.unavailableReason, isNull);
   });
 
   test('resolver un magnet sin debrid explica el motivo', () async {
     final repo = repository();
 
     await expectLater(
-      repo.resolveMagnet(_torrent.magnetUrl),
+      repo.resolveMagnet(_torrentSource.magnetUrl!),
       throwsA(isA<DebridUnavailableException>()),
     );
   });
@@ -175,7 +195,7 @@ void main() {
       _FakeDebrid(name: 'Working'),
     ]);
 
-    final resolved = await repo.resolveMagnet(_torrent.magnetUrl);
+    final resolved = await repo.resolveMagnet(_torrentSource.magnetUrl!);
 
     expect(resolved, isNotNull);
     expect(resolved!.source, 'Working');
