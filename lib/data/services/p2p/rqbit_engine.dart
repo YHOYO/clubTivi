@@ -7,6 +7,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'rqbit_binary.dart';
 import 'rqbit_client.dart';
@@ -143,6 +144,9 @@ class RqbitEngine {
       final added = await api.addTorrent(
         request.magnet,
         outputFolder: outputDirectory,
+        // Sin esto, volver a reproducir un torrent cuyos archivos quedaron en
+        // la carpeta de descargas falla: rqbit no sobrescribe por defecto.
+        overwrite: true,
       );
       // Sin id no se puede consultar; el hash funciona como identificador.
       torrentId = added.id == null ? request.infoHash : '${added.id}';
@@ -300,14 +304,88 @@ class RqbitEngine {
 
   String _mb(int bytes) => (bytes / (1024 * 1024)).toStringAsFixed(1);
 
+  // ─── Estado y control desde Ajustes ─────────────────────────────────────
+
+  bool get isRunning => supervisor.isRunning;
+
+  Uri? get baseUri => supervisor.baseUri;
+
+  /// Carpeta donde rqbit escribe lo descargado.
+  String get downloadDirectory => outputDirectory;
+
+  /// Carpeta de sesión/persistencia de rqbit.
+  String get sessionDirectory => supervisor.stateDirectory;
+
+  /// Torrents de la sesión, con estadísticas. Sin motor arrancado no hay nada
+  /// que listar; un fallo del motor devuelve lista vacía en vez de romper la
+  /// pantalla de ajustes.
+  Future<List<RqbitTorrentDetails>> listTorrents() async {
+    final api = _api;
+    if (api == null || !supervisor.isRunning) return const [];
+    try {
+      return await api.listTorrents();
+    } on RqbitException {
+      return const [];
+    }
+  }
+
+  /// Saca un torrent de la sesión. Con [deleteFiles] borra también lo
+  /// descargado; sin él, los archivos quedan en la carpeta de descargas.
+  Future<void> removeTorrent(String idOrHash, {bool deleteFiles = false}) async {
+    final api = _api;
+    if (api == null) return;
+    if (deleteFiles) {
+      await api.deleteTorrent(idOrHash);
+    } else {
+      await api.forgetTorrent(idOrHash);
+    }
+    _torrentIds.removeWhere((_, id) => id == idOrHash);
+  }
+
+  /// Para el motor sin cerrarlo: el siguiente Play lo vuelve a arrancar.
+  Future<void> stop() async {
+    await supervisor.stop();
+    _api = null;
+    _apiBase = null;
+    _torrentIds.clear();
+  }
+
+  /// Vacía la sesión: olvida los torrents, para el motor y borra su estado
+  /// persistido. Lo descargado se queda en la carpeta de descargas.
+  Future<void> clearSession() async {
+    try {
+      for (final torrent in await listTorrents()) {
+        final id = torrent.id;
+        if (id != null) await _api?.forgetTorrent('$id');
+      }
+    } on RqbitException {
+      // Si el motor no responde, el borrado de la sesión de abajo lo limpia
+      // todo igualmente.
+    }
+    await stop();
+    final directory = Directory(supervisor.stateDirectory);
+    if (await directory.exists()) {
+      try {
+        await directory.delete(recursive: true);
+      } catch (_) {
+        // Un estado que no se puede borrar no debe tumbar la pantalla; el
+        // motor lo recrea al arrancar.
+      }
+    }
+    _torrentIds.clear();
+  }
+
   /// Cierra el motor y mata el proceso. Seguro de llamar más de una vez.
+  ///
+  /// Es definitivo: después de esto el supervisor ya no arranca nada. Se usa
+  /// al cerrar la app y al recrear el motor por un cambio de ajustes.
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
     _api = null;
     _apiBase = null;
     _torrentIds.clear();
-    await supervisor.stop();
+    await supervisor.dispose();
   }
 }
 

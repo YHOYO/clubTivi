@@ -61,6 +61,14 @@ class RqbitSupervisor {
   /// Carpeta de sesión/persistencia de rqbit (JSON) y del fichero de PID.
   final String stateDirectory;
 
+  /// Puerto HTTP fijo pedido por el usuario. `null` = puerto libre automático.
+  final int? preferredPort;
+
+  /// Límites de velocidad en bytes por segundo (`--ratelimit-*`). `null` = sin
+  /// límite; rqbit los interpreta como bytes/s.
+  final int? downloadLimitBytesPerSecond;
+  final int? uploadLimitBytesPerSecond;
+
   final RqbitProcessStarter _startProcess;
   final RqbitPortAllocator _allocatePort;
   final RqbitReadinessProbe _probe;
@@ -83,6 +91,9 @@ class RqbitSupervisor {
   RqbitSupervisor({
     required this.downloadDirectory,
     required this.stateDirectory,
+    this.preferredPort,
+    this.downloadLimitBytesPerSecond,
+    this.uploadLimitBytesPerSecond,
     RqbitProcessStarter? startProcess,
     RqbitPortAllocator? allocatePort,
     RqbitReadinessProbe? probe,
@@ -141,8 +152,27 @@ class RqbitSupervisor {
   }
 
   /// Mata el proceso y espera a que termine. Idempotente.
+  ///
+  /// Es un parón reversible: el siguiente [ensureRunning] vuelve a arrancar el
+  /// motor (es lo que permite «parar» desde Ajustes y reproducir después).
+  /// Para un cierre definitivo está [dispose].
   Future<void> stop() async {
     _stopping = true;
+    try {
+      await _shutdownProcess();
+    } finally {
+      _stopping = false;
+    }
+  }
+
+  /// Parón definitivo: después de esto [ensureRunning] ya no arranca nada.
+  /// Es el que se usa al cerrar la app.
+  Future<void> dispose() async {
+    _stopping = true;
+    await _shutdownProcess();
+  }
+
+  Future<void> _shutdownProcess() async {
     _restartTimer?.cancel();
     _restartTimer = null;
 
@@ -212,12 +242,7 @@ class RqbitSupervisor {
     await Directory(downloadDirectory).create(recursive: true);
     await Directory(stateDirectory).create(recursive: true);
 
-    final int port;
-    try {
-      port = await _allocatePort();
-    } catch (error) {
-      throw RqbitPortException('No free local port for the P2P engine: $error');
-    }
+    final port = await _resolvePort();
     final uri = Uri.parse('http://127.0.0.1:$port');
 
     _logTail.clear();
@@ -225,6 +250,10 @@ class RqbitSupervisor {
       '--http-api-listen-addr',
       '127.0.0.1:$port',
       '--disable-upnp-port-forward',
+      if (downloadLimitBytesPerSecond != null)
+        ...['--ratelimit-download', '$downloadLimitBytesPerSecond'],
+      if (uploadLimitBytesPerSecond != null)
+        ...['--ratelimit-upload', '$uploadLimitBytesPerSecond'],
       'server',
       'start',
       '--persistence-location',
@@ -394,6 +423,33 @@ class RqbitSupervisor {
       runInShell: false,
     );
     return _DartProcessHandle(process);
+  }
+
+  /// El puerto configurado manda; si está ocupado se dice antes de arrancar
+  /// nada en vez de dejar que rqbit muera con un error opaco.
+  Future<int> _resolvePort() async {
+    final preferred = preferredPort;
+    if (preferred == null) {
+      try {
+        return await _allocatePort();
+      } catch (error) {
+        throw RqbitPortException(
+          'No free local port for the P2P engine: $error',
+        );
+      }
+    }
+    try {
+      final socket = await ServerSocket.bind(
+        InternetAddress.loopbackIPv4,
+        preferred,
+      );
+      await socket.close();
+      return preferred;
+    } catch (error) {
+      throw RqbitPortException(
+        'The configured port $preferred is already in use: $error',
+      );
+    }
   }
 
   static Future<int> _defaultPortAllocator() async {

@@ -40,16 +40,23 @@ class RqbitTorrentDetails {
   final String? outputFolder;
   final List<RqbitTorrentFile> files;
 
+  /// Presente solo cuando se pide la lista con `with_stats=true`.
+  final RqbitTorrentStats? stats;
+
   const RqbitTorrentDetails({
     required this.id,
     required this.infoHash,
     required this.name,
     required this.files,
     this.outputFolder,
+    this.stats,
   });
 
   /// rqbit publica `files` vacío mientras no ha descargado los metadatos.
   bool get hasMetadata => files.isNotEmpty;
+
+  /// Tamaño total del torrent, si las estadísticas lo conocen.
+  int get totalBytes => stats?.totalBytes ?? 0;
 
   factory RqbitTorrentDetails.fromJson(Object? json) {
     final map = _asMap(json);
@@ -57,13 +64,26 @@ class RqbitTorrentDetails {
     final files = filesJson is List
         ? [for (final entry in filesJson) RqbitTorrentFile.fromJson(entry)]
         : const <RqbitTorrentFile>[];
+    final statsJson = map['stats'];
     return RqbitTorrentDetails(
       id: _int(map['id']),
       infoHash: _string(map['info_hash']) ?? '',
       name: _string(map['name']) ?? '',
       outputFolder: _string(map['output_folder']),
       files: files,
+      stats: statsJson is Map ? RqbitTorrentStats.fromJson(statsJson) : null,
     );
+  }
+
+  /// `GET /torrents` devuelve `{"torrents": [ ... ]}`; una lista suelta
+  /// también se acepta por si la forma cambia entre versiones.
+  static List<RqbitTorrentDetails> listFromJson(Object? json) {
+    final entries = json is List ? json : _asMap(json)['torrents'];
+    if (entries is! List) return const [];
+    return [
+      for (final entry in entries)
+        if (entry is Map) RqbitTorrentDetails.fromJson(entry),
+    ];
   }
 
   @override

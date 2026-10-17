@@ -18,6 +18,8 @@ import '../../data/services/app_update_service.dart';
 import '../../data/services/backup_service.dart';
 import '../../data/services/debrid_settings.dart';
 import '../../data/services/language_preferences_store.dart';
+import '../../data/services/p2p/p2p_settings.dart';
+import '../../data/services/p2p/rqbit_release.dart';
 import '../../data/services/release_checksum.dart';
 import '../../data/services/stremio_addon_settings.dart';
 import '../../data/services/epg_refresh_service.dart';
@@ -1139,6 +1141,16 @@ class _ShowsApiKeysSectionState extends ConsumerState<_ShowsApiKeysSection> {
           onTap: () => context.push('/debrid-services'),
         ),
         ListTile(
+          leading: const Icon(Icons.hub_rounded),
+          title: const Text('P2P Engine'),
+          subtitle: Text(
+            _p2pSummary(ref.watch(p2pSettingsProvider)),
+            style: const TextStyle(fontSize: 12, color: Colors.white38),
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/p2p-engine'),
+        ),
+        ListTile(
           leading: const Icon(Icons.extension_rounded),
           title: const Text('Stremio Addons'),
           subtitle: Text(
@@ -1171,6 +1183,17 @@ class _ShowsApiKeysSectionState extends ConsumerState<_ShowsApiKeysSection> {
         ),
       ],
     );
+  }
+
+  /// Resumen de una línea de los ajustes del motor P2P.
+  String _p2pSummary(P2pSettings settings) {
+    final parts = <String>[
+      'rqbit $rqbitVersion',
+      if (settings.port != null) 'port ${settings.port}',
+      if (settings.hasLimits) 'speed limited',
+      if (settings.hasCustomDownloadDirectory) 'custom folder',
+    ];
+    return parts.join(' · ');
   }
 
   /// Resumen de una línea: "LAT → ESP → ENG • Subtitles: Español".
