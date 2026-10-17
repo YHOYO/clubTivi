@@ -46,11 +46,16 @@ fi
 if [[ "$MODE" == "debug" ]]; then
   # Cualquier instancia de VS puede tener su propio debug_nonredist; usa la del
   # MSVC mas nuevo, que es la que compila la app (VS 18 = 14.5x, VS 17 = 14.4x).
-  SRC=$(ls -d \
+  # Si no hay ninguna —la imagen de CI no siempre trae el CRT de depuracion— el
+  # `ls` falla y la tubería devuelve ese fallo: se tolera y se sigue, porque el
+  # paso es una comodidad para poder lanzar el .exe Debug a mano.
+  SRC=$( \
+        ls -d \
           "/c/Program Files/Microsoft Visual Studio"/*/*/VC/Redist/MSVC/*/debug_nonredist/x64/Microsoft.VC*.DebugCRT \
           "/c/Program Files (x86)/Microsoft Visual Studio"/*/*/VC/Redist/MSVC/*/debug_nonredist/x64/Microsoft.VC*.DebugCRT \
           2>/dev/null \
-        | awk -F'/MSVC/' '{print $2 "=" $0}' | sort -V | tail -1 | cut -d= -f2-)
+        | awk -F'/MSVC/' '{print $2 "=" $0}' | sort -V | tail -1 | cut -d= -f2- \
+        || true)
   if [[ -z "$SRC" ]]; then
     echo "aviso: no encontre debug_nonredist en Visual Studio; asumo que el CRT de depuracion ya es visible" >&2
   else

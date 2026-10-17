@@ -98,6 +98,9 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          # Si un paso anterior fallo, `reports/` puede no existir todavia:
+          # el arnes lo crea, pero este paso corre incluso cuando no llego.
+          New-Item -ItemType Directory -Force -Path reports | Out-Null
           if (Test-Path "build\windows\x64\runner\Debug") {
             Compress-Archive -Path "build\windows\x64\runner\Debug\*" `
               -DestinationPath "reports/clubtivi-windows-debug.zip" -Force
