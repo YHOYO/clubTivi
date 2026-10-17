@@ -118,6 +118,7 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
       bindings: {
         const SingleActivator(LogicalKeyboardKey.escape): () {
           Future.microtask(() {
+            if (!context.mounted) return;
             if (context.canPop()) {
               context.pop();
             } else {
@@ -209,7 +210,7 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
                   CachedNetworkImage(
                     imageUrl: show.backdropUrl!,
                     fit: BoxFit.cover,
-                    errorWidget: (_, __, ___) => Container(color: const Color(0xFF1A1A2E)),
+                    errorWidget: (_, _, _) => Container(color: const Color(0xFF1A1A2E)),
                   )
                 else
                   Container(color: const Color(0xFF1A1A2E)),
@@ -854,7 +855,7 @@ class _EpisodeTile extends StatelessWidget {
                     ? CachedNetworkImage(
                         imageUrl: episode.stillUrl!,
                         fit: BoxFit.cover,
-                        errorWidget: (_, __, ___) => _placeholder(),
+                        errorWidget: (_, _, _) => _placeholder(),
                       )
                     : _placeholder(),
               ),

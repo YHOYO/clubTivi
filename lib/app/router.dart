@@ -105,4 +105,4 @@ GoRouter createRouter() {
 }
 
 /// Global router instance — initialized lazily.
-late final GoRouter router = createRouter();
+final GoRouter router = createRouter();

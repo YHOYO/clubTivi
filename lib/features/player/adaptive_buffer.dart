@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:media_kit/src/player/native/player/real.dart' as native_player;
+import 'package:media_kit/media_kit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'player_service.dart';
@@ -177,7 +177,7 @@ class AdaptiveBufferManager {
   Future<void> _setMpvProperty(PlayerService ps, String key, String value) async {
     try {
       final np = ps.player.platform;
-      if (np is native_player.NativePlayer) {
+      if (np is NativePlayer) {
         await np.setProperty(key, value);
       }
     } catch (_) {

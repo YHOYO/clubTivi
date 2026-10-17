@@ -38,7 +38,6 @@ class CastService {
   final Map<String, CastDevice> _devices = {};
 
   CastDevice? _activeDevice;
-  String? _activeUrl;
   bool _isCasting = false;
 
   /// Stream of discovered cast devices.
@@ -108,7 +107,6 @@ class CastService {
       if (device.type == 'webos' && device.webosClient != null) {
         await device.webosClient!.playMedia(url, title: title);
         _activeDevice = device;
-        _activeUrl = url;
         _isCasting = true;
         _log.i('Casting to ${device.name} via WebOS: $url');
         return true;
@@ -116,7 +114,6 @@ class CastService {
         await device.dlnaDevice!.setUrl(url, title: title);
         await device.dlnaDevice!.play();
         _activeDevice = device;
-        _activeUrl = url;
         _isCasting = true;
         _log.i('Casting to ${device.name} via DLNA: $url');
         return true;
@@ -140,7 +137,6 @@ class CastService {
       _log.e('Stop cast error: $e');
     }
     _activeDevice = null;
-    _activeUrl = null;
     _isCasting = false;
   }
 

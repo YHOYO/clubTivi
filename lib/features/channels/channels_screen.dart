@@ -14,8 +14,6 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/countdown_snackbar.dart';
-import '../../core/fuzzy_match.dart';
-import '../../core/platform_info.dart';
 import '../../core/weather_clock_widget.dart';
 import '../../data/datasources/local/database.dart' as db;
 import '../../data/datasources/remote/tmdb_client.dart';
@@ -54,11 +52,10 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
   Map<String, String> _epgMappings = {};
   /// Maps channel ID → user-set vanity name (original name preserved in DB)
   Map<String, String> _vanityNames = {};
-  Set<String> _validEpgChannelIds = {};
   Map<String, String> _rawToPrefixedEpg = {}; // XMLTV channelId → prefixed id
   Map<String, String> _epgNameToId = {}; // normalized EPG displayName → prefixed id
   Map<String, String> _epgCallSignToId = {}; // call sign (e.g. WABC) → prefixed id
-  bool _showGuideView = true;
+  final bool _showGuideView = true;
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
   List<String> _searchHistory = [];
@@ -67,13 +64,8 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
   final _channelListController = ScrollController();
   late final ScrollController _guideScrollController;
   Timer? _guideIdleTimer;
-  DateTime? _guideDayStart; // stored for snap-back calculation
   Timer? _searchDebounce;
 
-  // Overlay state
-  bool _showOverlay = false;
-  // _showDebugOverlay removed — debug info is now a dialog
-  Timer? _overlayTimer;
   Timer? _nowPlayingTimer;
   final _focusNode = FocusNode();
 
@@ -87,7 +79,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
 
   // Sidebar state
   bool _sidebarExpanded = true;
-  Set<String> _expandedSections = {'favorites'};
+  final Set<String> _expandedSections = {'favorites'};
   final _sidebarSearchController = TextEditingController();
   final _sidebarFocusNode = FocusScopeNode(debugLabel: 'sidebar');
   final _sidebarAllItemFocusNode = FocusNode(debugLabel: 'sidebar-all');
@@ -115,8 +107,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
   Map<String, List<String>> _providerGroups = {};
   // Track which providers' channels have been loaded into _allChannels
   final Set<String> _loadedProviders = {};
-  // True while background is still loading all channels
-  bool _backgroundLoading = false;
   // Favorite lists state
   List<db.FavoriteList> _favoriteLists = [];
   Set<String> _favoritedChannelIds = {};
@@ -135,7 +125,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
   /// channelId → list of group memberships (for fast player lookup)
   Map<String, List<db.FailoverGroupMembership>> _failoverGroupIndex = {};
   final Set<int> _expandedFailoverGroups = {};
-  bool _lastClickShift = false;
 
   // Time format
   bool _use24HourTime = false;
@@ -548,7 +537,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
     _guideScrollController.dispose();
     _guideIdleTimer?.cancel();
     _searchDebounce?.cancel();
-    _overlayTimer?.cancel();
     _nowPlayingTimer?.cancel();
     _volumeOverlayTimer?.cancel();
     _topBarTimer?.cancel();
@@ -617,7 +605,9 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
     final pGroups = bgResults[0] as Map<String, List<String>>;
     final foGroups = bgResults[1] as List<db.FailoverGroup>;
     final allGroupNames = <String>{};
-    for (final gl in pGroups.values) allGroupNames.addAll(gl);
+    for (final gl in pGroups.values) {
+      allGroupNames.addAll(gl);
+    }
 
     final foGroupMembers = <int, List<String>>{};
     for (final g in foGroups) {
@@ -642,7 +632,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
     if (mounted) setState(() => _epgLoading = false);
 
     // ── Background: load all provider channels incrementally ──
-    _backgroundLoading = true;
     for (final provider in providers) {
       if (!mounted) return;
       final channels = await database.getChannelsForProvider(provider.id);
@@ -658,7 +647,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
         }
       });
     }
-    _backgroundLoading = false;
 
     // Re-index EPG with full channel set
     if (mounted) _loadEpgData(database, _allChannels, favChannelIds);
@@ -782,7 +770,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
     setState(() {
       _nowPlaying = nowPlaying;
       _epgMappings = epgMap;
-      _validEpgChannelIds = validIds;
       _rawToPrefixedEpg = rawToPrefixed;
       _epgNameToId = epgNameToId;
       _epgCallSignToId = epgCallSignToId;
@@ -989,7 +976,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
       _selectedIndex = index;
       _previewChannel = channel;
     });
-    _showInfoOverlay(channel, index);
     _saveSession();
   }
 
@@ -1011,17 +997,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
     setState(() {
       _selectedIndex = swapTo;
       _previewChannel = channel;
-    });
-    _showInfoOverlay(channel, swapTo);
-  }
-
-  void _showInfoOverlay(db.Channel channel, int index) {
-    setState(() => _showOverlay = true);
-
-    // Reset auto-hide timer
-    _overlayTimer?.cancel();
-    _overlayTimer = Timer(const Duration(seconds: 5), () {
-      if (mounted) setState(() => _showOverlay = false);
     });
   }
 
@@ -1116,16 +1091,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
     } catch (_) {
       return [];
     }
-  }
-
-  /// All current/upcoming programme titles for a channel (for search).
-  List<String> _getChannelProgrammeTitles(db.Channel channel) {
-    final epgId = _getEpgId(channel);
-    if (epgId == null) return const [];
-    return _nowPlaying
-        .where((p) => p.epgChannelId == epgId)
-        .map((p) => p.title)
-        .toList();
   }
 
   db.EpgProgramme? _getEpgProgramme(db.Channel channel) {
@@ -1350,7 +1315,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Image.asset('assets/icon/clubtivi-icon.png', width: 80, height: 80,
-                errorBuilder: (_, __, ___) => const Icon(Icons.tv, size: 64, color: Color(0xFF6C5CE7))),
+                errorBuilder: (_, _, _) => const Icon(Icons.tv, size: 64, color: Color(0xFF6C5CE7))),
               const SizedBox(height: 12),
               const Text('clubTivi', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
               const SizedBox(height: 20),
@@ -2601,7 +2566,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    if (trailing != null) trailing,
+                    ?trailing,
                   ],
                 ),
               ),
@@ -3057,7 +3022,9 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
       DateTime dayStart, DateTime dayEnd, {required int totalMinutes, required double totalWidth}) {
     // Resolve the foIndex-th non-empty failover group
     final channelById = <String, db.Channel>{};
-    for (final c in _allChannels) channelById[c.id] = c;
+    for (final c in _allChannels) {
+      channelById[c.id] = c;
+    }
     var count = 0;
     late db.FailoverGroup group;
     late List<db.Channel> members;
@@ -3158,7 +3125,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                         borderRadius: BorderRadius.circular(4),
                         child: primary.tvgLogo != null && primary.tvgLogo!.isNotEmpty
                             ? Image.network(primary.tvgLogo!, width: 28, height: 28, fit: BoxFit.contain,
-                                errorBuilder: (_, __, ___) => Container(width: 28, height: 28, color: const Color(0xFF16213E),
+                                errorBuilder: (_, _, _) => Container(width: 28, height: 28, color: const Color(0xFF16213E),
                                     child: const Icon(Icons.bolt, size: 14, color: Colors.amber)))
                             : Container(width: 28, height: 28, color: const Color(0xFF16213E),
                                 child: const Icon(Icons.bolt, size: 14, color: Colors.amber)),
@@ -3211,7 +3178,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                           maxWidth: totalWidth,
                           child: Transform.translate(
                             offset: Offset(-hOffset, 0),
-                            child: _buildGuideRowProgrammes(epgMember!, database, dayStart, dayEnd, totalMinutes: totalMinutes, totalWidth: totalWidth),
+                            child: _buildGuideRowProgrammes(epgMember, database, dayStart, dayEnd, totalMinutes: totalMinutes, totalWidth: totalWidth),
                           ),
                         ),
                       );
@@ -3277,7 +3244,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                         width: 22, height: 22,
                         child: ch.tvgLogo != null && ch.tvgLogo!.isNotEmpty
                             ? Image.network(ch.tvgLogo!, fit: BoxFit.contain,
-                                errorBuilder: (_, __, ___) => const Icon(Icons.tv, size: 12, color: Colors.white24))
+                                errorBuilder: (_, _, _) => const Icon(Icons.tv, size: 12, color: Colors.white24))
                             : const Icon(Icons.tv, size: 12, color: Colors.white24),
                       ),
                     ),
@@ -3636,7 +3603,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                         ? Image.network(
                             primary.tvgLogo!,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Container(
+                            errorBuilder: (_, _, _) => Container(
                               color: const Color(0xFF16213E),
                               child: const Icon(Icons.bolt, size: 18, color: Colors.amber),
                             ),
@@ -3775,7 +3742,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                           width: 24, height: 24,
                           child: ch.tvgLogo != null && ch.tvgLogo!.isNotEmpty
                               ? Image.network(ch.tvgLogo!, fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => const Icon(Icons.tv, size: 14, color: Colors.white24))
+                                  errorBuilder: (_, _, _) => const Icon(Icons.tv, size: 14, color: Colors.white24))
                               : const Icon(Icons.tv, size: 14, color: Colors.white24),
                         ),
                       ),
@@ -3864,7 +3831,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
       _selectedIndex = -1;
       _previewChannel = target;
     });
-    _showInfoOverlay(target, _selectedIndex);
     _saveSession();
   }
 
@@ -4292,7 +4258,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                           checkedIds.remove(list.id);
                         }
                         setSheetState(() {});
-                        resetAutoClose(Navigator.of(ctx));
+                        if (ctx.mounted) resetAutoClose(Navigator.of(ctx));
                       },
                     );
                   }),
@@ -4419,8 +4385,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                     : ReorderableListView.builder(
                         shrinkWrap: true,
                         itemCount: lists.length,
-                        onReorder: (oldIdx, newIdx) async {
-                          if (newIdx > oldIdx) newIdx--;
+                        onReorderItem: (oldIdx, newIdx) async {
                           final item = lists.removeAt(oldIdx);
                           lists.insert(newIdx, item);
                           setDialogState(() {});
@@ -4897,7 +4862,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                                             ? Image.network(
                                                 channel.tvgLogo!,
                                                 width: 28, height: 28, fit: BoxFit.contain,
-                                                errorBuilder: (_, __, ___) => Container(
+                                                errorBuilder: (_, _, _) => Container(
                                                   width: 28, height: 28,
                                                   color: const Color(0xFF16213E),
                                                   child: const Icon(Icons.tv, size: 14, color: Colors.white24),
