@@ -49,13 +49,13 @@ jobs:
           "$machinePath;$userPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Generate fixtures
-        run: python .dev/generate_fixtures.py
+        run: python tools/fixtures/generate_fixtures.py
 
       - name: Start fixture server
         shell: pwsh
         run: |
           $server = Start-Process -FilePath python `
-            -ArgumentList ".dev/fixtures_server.py", "8899" `
+            -ArgumentList "tools/fixtures/fixtures_server.py", "8899" `
             -RedirectStandardOutput fixtures-server.log `
             -RedirectStandardError fixtures-server.err.log `
             -PassThru
@@ -81,7 +81,7 @@ jobs:
 
       - name: Prepare debug runtime (CRT junto al .exe)
         shell: bash
-        run: bash .dev/run_windows_debug.sh
+        run: bash tools/fixtures/run_windows_debug.sh
 
       - name: Run functional harness
         shell: pwsh

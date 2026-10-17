@@ -1,11 +1,11 @@
 // Arnés de verificación funcional de clubTivi en Windows.
 //
 // Corre sobre la app real (mismo código de producción) contra los fixtures
-// locales servidos por .dev/fixtures_server.py, así que no necesita cuenta de
+// locales servidos por tools/fixtures/fixtures_server.py, así que no necesita
 // IPTV ni credenciales:
 //
-//   python .dev/generate_fixtures.py 8899
-//   python .dev/fixtures_server.py 8899
+//   python tools/fixtures/generate_fixtures.py 8899
+//   python tools/fixtures/fixtures_server.py 8899
 //   flutter test integration_test/windows_functional_test.dart -d windows
 //
 // Verifica, extremo a extremo: parseo M3U por HTTP, almacenamiento en SQLite,
