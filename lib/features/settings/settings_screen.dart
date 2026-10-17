@@ -15,6 +15,7 @@ import '../../core/weather_service.dart';
 import '../../data/datasources/local/database.dart' as db;
 import '../../data/services/app_update_service.dart';
 import '../../data/services/backup_service.dart';
+import '../../data/services/debrid_settings.dart';
 import '../../data/services/epg_refresh_service.dart';
 import '../providers/provider_manager.dart';
 import '../remote/web_remote_server.dart';
@@ -852,7 +853,9 @@ class _ShowsApiKeysSectionState extends ConsumerState<_ShowsApiKeysSection> {
       _loaded = true;
     }
 
-    final debridCount = keys.configuredDebridCount;
+    final debrid = ref.watch(debridSettingsProvider);
+    final configured = debrid.configuredCount;
+    final enabled = debrid.enabledCount;
 
     return _SettingsSection(
       title: 'Shows & Movies',
@@ -897,12 +900,18 @@ class _ShowsApiKeysSectionState extends ConsumerState<_ShowsApiKeysSection> {
           leading: const Icon(Icons.cloud_download_rounded),
           title: const Text('Debrid Services'),
           subtitle: Text(
-            debridCount > 0
-                ? '$debridCount service${debridCount > 1 ? 's' : ''} configured'
-                : 'Not configured',
+            configured == 0
+                ? 'Not configured — the app works without one'
+                : enabled == 0
+                    ? '$configured configured • all disabled'
+                    : '$enabled of $configured enabled',
             style: TextStyle(
               fontSize: 12,
-              color: debridCount > 0 ? Colors.green : Colors.white38,
+              color: enabled > 0
+                  ? Colors.green
+                  : configured > 0
+                      ? Colors.orangeAccent
+                      : Colors.white38,
             ),
           ),
           trailing: const Icon(Icons.chevron_right),
@@ -917,7 +926,6 @@ class _ShowsApiKeysSectionState extends ConsumerState<_ShowsApiKeysSection> {
     await ref.read(showsApiKeysProvider.notifier).save(
       traktClientId: _traktCtrl.text.trim(),
       tmdbApiKey: keys.tmdbApiKey,
-      debridTokens: keys.debridTokens,
     );
     ref.invalidate(showsRepositoryProvider);
     if (mounted) {
@@ -933,7 +941,6 @@ class _ShowsApiKeysSectionState extends ConsumerState<_ShowsApiKeysSection> {
     await ref.read(showsApiKeysProvider.notifier).save(
       traktClientId: keys.traktClientId,
       tmdbApiKey: _tmdbCtrl.text.trim(),
-      debridTokens: keys.debridTokens,
     );
     ref.invalidate(showsRepositoryProvider);
     if (mounted) {

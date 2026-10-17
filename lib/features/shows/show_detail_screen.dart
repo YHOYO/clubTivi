@@ -7,6 +7,7 @@ import 'package:palette_generator/palette_generator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../data/models/show.dart';
+import '../../data/services/debrid_settings.dart';
 import 'shows_providers.dart';
 
 /// Detail screen for a show or movie — backdrop, info, seasons, episodes, play
@@ -493,6 +494,8 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+              if (streams.any((s) => !s.isAvailable))
+                _buildUnavailableNotice(ctx, streams),
               const SizedBox(height: 8),
               const Divider(color: Colors.white12, height: 1),
               Expanded(
@@ -501,11 +504,15 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
                   itemCount: streams.length,
                   itemBuilder: (ctx, index) {
                     final stream = streams[index];
+                    final available = stream.isAvailable;
                     return ListTile(
                       leading: _streamQualityBadge(stream.quality),
                       title: Text(
                         stream.filename,
-                        style: const TextStyle(color: Colors.white, fontSize: 13),
+                        style: TextStyle(
+                          color: available ? Colors.white : Colors.white38,
+                          fontSize: 13,
+                        ),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -513,39 +520,60 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
                         [
                           stream.source,
                           if (stream.seeds != null) '👤 ${stream.seeds}',
+                          if (!available)
+                            stream.unavailableReason ?? kDebridRequiredReason,
                         ].join(' • '),
-                        style: const TextStyle(color: Colors.white38, fontSize: 12),
+                        style: TextStyle(
+                          color: available
+                              ? Colors.white38
+                              : Colors.orangeAccent.withValues(alpha: 0.85),
+                          fontSize: 12,
+                        ),
                       ),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          IconButton(
-                            icon: const Icon(Icons.download_rounded, color: Colors.white54, size: 24),
-                            tooltip: 'Download via browser',
-                            onPressed: () {
-                              Navigator.pop(ctx);
-                              _resolveAndDownload(stream, title);
-                            },
-                          ),
+                          if (available)
+                            IconButton(
+                              icon: const Icon(Icons.download_rounded, color: Colors.white54, size: 24),
+                              tooltip: 'Download via browser',
+                              onPressed: () {
+                                Navigator.pop(ctx);
+                                _resolveAndDownload(stream, title);
+                              },
+                            ),
                           IconButton(
                             icon: Icon(
-                              Icons.play_circle_fill,
-                              color: stream.isCached
-                                  ? const Color(0xFF6C5CE7)
-                                  : const Color(0xFF6C5CE7).withValues(alpha: 0.6),
+                              available ? Icons.play_circle_fill : Icons.lock_outline,
+                              color: available
+                                  ? (stream.isCached
+                                      ? const Color(0xFF6C5CE7)
+                                      : const Color(0xFF6C5CE7).withValues(alpha: 0.6))
+                                  : Colors.orangeAccent.withValues(alpha: 0.7),
                               size: 32,
                             ),
-                            tooltip: 'Play',
+                            tooltip: available
+                                ? 'Play'
+                                : stream.unavailableReason ??
+                                    kDebridRequiredReason,
                             onPressed: () {
                               Navigator.pop(ctx);
-                              _resolveAndPlay(stream, title);
+                              if (available) {
+                                _resolveAndPlay(stream, title);
+                              } else {
+                                _showUnavailable(stream);
+                              }
                             },
                           ),
                         ],
                       ),
                       onTap: () {
                         Navigator.pop(ctx);
-                        _resolveAndPlay(stream, title);
+                        if (available) {
+                          _resolveAndPlay(stream, title);
+                        } else {
+                          _showUnavailable(stream);
+                        }
                       },
                     );
                   },
@@ -558,9 +586,88 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     );
   }
 
+  Widget _buildUnavailableNotice(BuildContext sheetContext, List<ResolvedStream> streams) {
+    final unavailable = streams.where((s) => !s.isAvailable).length;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+      padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
+      decoration: BoxDecoration(
+        color: Colors.orangeAccent.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.orangeAccent.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.lock_outline, color: Colors.orangeAccent, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              unavailable == streams.length
+                  ? 'None of these sources can play without debrid. Enable a service to use them.'
+                  : '$unavailable of ${streams.length} sources need a debrid service.',
+              style: const TextStyle(
+                color: Colors.orangeAccent,
+                fontSize: 12,
+                height: 1.3,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(sheetContext);
+              context.push('/debrid-services');
+            },
+            child: const Text('Settings'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Explica por qué una fuente no se puede reproducir y ofrece el atajo a
+  /// Ajustes, en vez de dejar que la reproducción falle sin motivo.
+  void _showUnavailable(ResolvedStream stream) {
+    final reason = stream.unavailableReason ?? kDebridRequiredReason;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        title: const Text('Source unavailable'),
+        content: Text(
+          '$reason.\n\nEnable a debrid service in Settings → Debrid Services, '
+          'or pick another source.',
+          style: const TextStyle(color: Colors.white70, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              context.push('/debrid-services');
+            },
+            child: const Text('Open Settings'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _resolveAndPlay(ResolvedStream stream, String title) async {
-    if (stream.magnetUrl == null) {
-      _showSnackbar('No magnet URL available');
+    // Una URL directa no depende de debrid: se reproduce tal cual.
+    if (stream.isDirect) {
+      _launchPlayer(stream, title);
+      return;
+    }
+    if (!stream.isAvailable) {
+      _showUnavailable(stream);
+      return;
+    }
+    final magnet = stream.magnetUrl;
+    if (magnet == null || magnet.isEmpty) {
+      _showSnackbar('This source has no playable link');
       return;
     }
     _showSnackbar(stream.isCached ? 'Preparing stream…' : 'Preparing stream — this may take a moment…');
@@ -568,7 +675,7 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     try {
       final repo = await ref.read(showsRepositoryProvider.future);
       final resolved = await repo.resolveMagnet(
-        stream.magnetUrl!,
+        magnet,
         onProgress: (status, progress) {
           if (mounted) {
             final label = _friendlyStatus(status);
@@ -576,12 +683,14 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
           }
         },
       );
-      if (resolved == null) {
+      if (resolved == null || resolved.url.isEmpty) {
         _showSnackbar('Stream unavailable — try another source');
         return;
       }
       if (!mounted) return;
       _launchPlayer(resolved, title);
+    } on DebridUnavailableException catch (e) {
+      _showSnackbar(e.message);
     } catch (e) {
       _showSnackbar('$e');
     } finally {
@@ -590,8 +699,17 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
   }
 
   Future<void> _resolveAndDownload(ResolvedStream stream, String title) async {
-    if (stream.magnetUrl == null) {
-      _showSnackbar('No magnet URL available');
+    if (stream.isDirect) {
+      await _openDownloadUrl(stream.url);
+      return;
+    }
+    if (!stream.isAvailable) {
+      _showUnavailable(stream);
+      return;
+    }
+    final magnet = stream.magnetUrl;
+    if (magnet == null || magnet.isEmpty) {
+      _showSnackbar('This source has no downloadable link');
       return;
     }
     _showSnackbar(stream.isCached ? 'Preparing download…' : 'Preparing download — this may take a moment…');
@@ -599,7 +717,7 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     try {
       final repo = await ref.read(showsRepositoryProvider.future);
       final resolved = await repo.resolveMagnet(
-        stream.magnetUrl!,
+        magnet,
         onProgress: (status, progress) {
           if (mounted) {
             final label = _friendlyStatus(status);
@@ -611,17 +729,23 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
         _showSnackbar('Download unavailable — try another source');
         return;
       }
-      final uri = Uri.parse(resolved.url);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-        if (mounted) _showSnackbar('Download started in browser');
-      } else {
-        _showSnackbar('Could not open download URL');
-      }
+      await _openDownloadUrl(resolved.url);
+    } on DebridUnavailableException catch (e) {
+      _showSnackbar(e.message);
     } catch (e) {
       _showSnackbar('$e');
     } finally {
       if (mounted) setState(() => _resolving = false);
+    }
+  }
+
+  Future<void> _openDownloadUrl(String url) async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (mounted) _showSnackbar('Download started in browser');
+    } else {
+      _showSnackbar('Could not open download URL');
     }
   }
 
