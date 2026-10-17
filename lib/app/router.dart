@@ -8,6 +8,7 @@ import '../features/providers/providers_screen.dart';
 import '../features/epg_mapping/epg_mapping_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/settings/debrid_services_screen.dart';
+import '../features/settings/stremio_addons_screen.dart';
 import '../features/shows/shows_screen.dart';
 import '../features/shows/show_detail_screen.dart';
 import '../features/splash/splash_screen.dart';
@@ -40,6 +41,10 @@ GoRouter createRouter() {
     GoRoute(
       path: '/debrid-services',
       builder: (context, state) => const DebridServicesScreen(),
+    ),
+    GoRoute(
+      path: '/stremio-addons',
+      builder: (context, state) => const StremioAddonsScreen(),
     ),
   ];
 

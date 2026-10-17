@@ -2,6 +2,7 @@
 // directa debe abrir el reproductor sin depender de debrid, y un torrent sin
 // debrid debe explicar el motivo en vez de fallar.
 import 'package:clubtivi/data/models/show.dart';
+import 'package:clubtivi/data/models/stream_search_result.dart';
 import 'package:clubtivi/data/models/stream_source.dart';
 import 'package:clubtivi/data/services/debrid_settings.dart';
 import 'package:clubtivi/features/shows/show_detail_screen.dart';
@@ -48,8 +49,9 @@ void main() {
 
   Future<Map<String, dynamic>? Function()> pumpScreen(
     WidgetTester tester,
-    List<StreamSource> streams,
-  ) async {
+    List<StreamSource> streams, {
+    List<StreamProviderFailure> failures = const [],
+  }) async {
     Map<String, dynamic>? playerExtra;
 
     final router = GoRouter(
@@ -74,6 +76,11 @@ void main() {
           builder: (context, state) =>
               const Scaffold(body: Text('DEBRID SETTINGS')),
         ),
+        GoRoute(
+          path: '/stremio-addons',
+          builder: (context, state) =>
+              const Scaffold(body: Text('STREMIO ADDONS')),
+        ),
       ],
     );
 
@@ -84,7 +91,10 @@ void main() {
           showDetailProvider.overrideWith(
             (ref, params) async => ShowDetail(show: _movie),
           ),
-          resolveStreamProvider.overrideWith((ref, params) async => streams),
+          resolveStreamProvider.overrideWith(
+            (ref, params) async =>
+                StreamSearchResult(sources: streams, failures: failures),
+          ),
         ],
         child: MaterialApp.router(routerConfig: router),
       ),
@@ -129,5 +139,34 @@ void main() {
     await tester.tap(find.text('Open Settings'));
     await tester.pumpAndSettle();
     expect(find.text('DEBRID SETTINGS'), findsOneWidget);
+  });
+
+  testWidgets('un addon caído se explica junto a las fuentes que sí llegaron',
+      (tester) async {
+    await pumpScreen(
+      tester,
+      const [_directStream],
+      failures: const [
+        StreamProviderFailure(
+          providerId: 'com.stremio.torrentio.addon',
+          providerName: 'Torrentio',
+          reason: 'El addon tardó demasiado en responder',
+        ),
+      ],
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Play'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Torrentio'), findsOneWidget);
+    expect(
+      find.textContaining('El addon tardó demasiado en responder'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Addons'));
+    await tester.pumpAndSettle();
+    expect(find.text('STREMIO ADDONS'), findsOneWidget);
   });
 }

@@ -4,25 +4,43 @@ import 'dart:convert';
 import '../../data/datasources/remote/trakt_client.dart';
 import '../../data/datasources/remote/tmdb_client.dart';
 import '../../data/datasources/remote/debrid_service.dart';
+import '../../data/datasources/remote/stremio_addon_client.dart';
 import '../../data/datasources/remote/torrent_search_client.dart';
 import '../../data/repositories/shows_repository.dart';
 import '../../data/models/show.dart';
-import '../../data/models/stream_source.dart';
+import '../../data/models/stremio_addon.dart';
+import '../../data/models/stream_search_result.dart';
 import '../../data/services/debrid_settings.dart';
 import '../../data/services/language_preferences_store.dart';
+import '../../data/services/stremio_addon_settings.dart';
 import '../../data/services/stream_ranker.dart';
 
 // SharedPreferences keys for API credentials
 const _kTraktClientId = 'shows_trakt_client_id';
 const _kTmdbApiKey = 'shows_tmdb_api_key';
 
-/// Provider for the shows repository (rebuilds when keys or debrid settings
-/// change). Los servicios debrid se construyen en el orden de prioridad que
-/// fija [debridSettingsProvider]; sin ninguno habilitado, el repositorio
-/// funciona en modo sin debrid.
+/// Cliente compartido del protocolo Stremio: lo usan tanto la búsqueda de
+/// fuentes como la pantalla de instalación, y en tests se sustituye por un
+/// doble sin tocar la red.
+final stremioAddonClientProvider =
+    Provider<StremioAddonClient>((ref) => StremioAddonClient());
+
+/// Addons que se van a consultar, en orden de prioridad: un addon deshabilitado
+/// no llega nunca al repositorio.
+final enabledStremioAddonsProvider = Provider<List<InstalledAddon>>(
+  (ref) => ref.watch(stremioAddonSettingsProvider).enabledAddons,
+);
+
+/// Provider for the shows repository (rebuilds when keys, debrid settings or
+/// addons change). Los servicios debrid se construyen en el orden de prioridad
+/// que fija [debridSettingsProvider] y los addons en el que fija
+/// [stremioAddonSettingsProvider]; sin nada habilitado, el repositorio sigue
+/// funcionando exactamente como antes.
 final showsRepositoryProvider = FutureProvider<ShowsRepository>((ref) async {
   final keys = ref.watch(showsApiKeysProvider);
   final debridSettings = ref.watch(debridSettingsProvider);
+  final addons = ref.watch(enabledStremioAddonsProvider);
+  final stremioClient = ref.watch(stremioAddonClientProvider);
 
   return ShowsRepository(
     trakt: keys.hasTraktKey
@@ -36,6 +54,8 @@ final showsRepositoryProvider = FutureProvider<ShowsRepository>((ref) async {
         createDebridService(config.type, config.token),
     ],
     torrentSearch: TorrentSearchClient(),
+    stremioAddons: addons,
+    stremioClient: stremioClient,
   );
 });
 
@@ -116,18 +136,23 @@ class EpisodeParams {
 }
 
 /// Fuentes para reproducción, ya rankeadas por las preferencias de idioma
-/// persistidas. El ranking es puro; el provider solo lo compone con el
-/// repositorio y recorta a las 10 mejores para la pantalla actual.
+/// persistidas, junto con los addons que no pudieron responder. El ranking es
+/// puro; el provider solo lo compone con el repositorio y recorta a las 10
+/// mejores para la pantalla actual.
 final resolveStreamProvider =
-    FutureProvider.family<List<StreamSource>, StreamResolveParams>((ref, params) async {
+    FutureProvider.family<StreamSearchResult, StreamResolveParams>((ref, params) async {
   final preferences = ref.watch(languagePreferencesProvider);
   final repo = await ref.watch(showsRepositoryProvider.future);
-  final sources = await repo.resolveStreams(
+  final result = await repo.resolveStreams(
     imdbId: params.imdbId,
     season: params.season,
     episode: params.episode,
   );
-  return rankStreams(sources, preferences).take(10).toList(growable: false);
+  return result.copyWith(
+    sources: rankStreams(result.sources, preferences)
+        .take(10)
+        .toList(growable: false),
+  );
 });
 
 class StreamResolveParams {
