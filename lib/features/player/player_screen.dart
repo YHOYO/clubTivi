@@ -78,6 +78,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   // Favorite lists
   List<db.FavoriteList> _favoriteLists = [];
 
+  /// Se guarda en initState porque `dispose` ya no puede leer providers.
+  late final PlayerService _playerService;
+
   // Track selection state
   bool _subtitlesEnabled = false;
   StreamSubscription<String>? _playbackErrorSub;
@@ -94,6 +97,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   @override
   void initState() {
     super.initState();
+    _playerService = ref.read(playerServiceProvider);
     _channelIndex = widget.currentIndex;
     _currentChannelName = widget.channelName;
     _currentChannelLogo = widget.channelLogo;
@@ -297,6 +301,18 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   bool get _hasAlternativeStreams {
     final urls = [widget.streamUrl, ...widget.alternativeUrls];
     return _currentUrlIndex < urls.length - 1;
+  }
+
+  /// Recarga el canal sin salir del reproductor (señal cortada o congelada).
+  void _refreshPlayback() {
+    final playerService = ref.read(playerServiceProvider);
+    if (playerService.currentUrl == null) return;
+    _preflight = null;
+    _preflightWarned = false;
+    _playbackRequestedAt = DateTime.now();
+    unawaited(_probeCurrentStream());
+    unawaited(playerService.reload());
+    _autoHideOverlay();
   }
 
   void _switchToNextStream() {
@@ -640,6 +656,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     _overlayTimer?.cancel();
     _playbackErrorSub?.cancel();
     _volumeTimer?.cancel();
+    // Un VOD no tiene otra superficie donde seguir viéndose: si no se para al
+    // salir, su audio se queda sonando detrás de la ficha. El canal en vivo sí
+    // tiene la vista previa de Canales, así que ese sigue.
+    if (widget.channels.isEmpty) {
+      unawaited(_playerService.stop());
+    }
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
@@ -677,6 +699,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                 audioTrackCount: _audioTracks.length,
                 onAudioSelect: _showAudioPicker,
                 onCastTap: () => _showCastPicker(),
+                // En un VOD reabrir volvería al minuto cero; la recarga es
+                // para el directo, donde no se pierde el hilo.
+                onRefresh: widget.channels.isEmpty ? null : _refreshPlayback,
                 onBackTap: () {
                   GoRouter.of(context).canPop()
                       ? GoRouter.of(context).pop()

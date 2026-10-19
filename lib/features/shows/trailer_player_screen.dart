@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../data/models/media_video.dart';
 import '../../data/services/trailer_stream_resolver.dart';
+import '../player/player_service.dart';
 
 /// Abre el vídeo en YouTube. Es la salida cuando la app no puede reproducirlo
 /// por dentro: mejor decirlo y llevar allí que dejar un botón que no responde.
@@ -104,6 +105,11 @@ class _TrailerPlayerScreenState extends ConsumerState<TrailerPlayerScreen> {
   }
 
   Future<void> _start(MediaVideo video) async {
+    // Un solo motor a la vez: el canal en vivo que estuviera sonando se apaga
+    // antes de abrir el tráiler (o de resolverlo).
+    await ref.read(playerServiceProvider).stop();
+    if (!mounted) return;
+
     if (!video.isPlayableInApp) {
       await _degrade(
         'Este vídeo no es de YouTube, así que no se puede ver dentro de la app.',

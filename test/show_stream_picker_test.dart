@@ -5,6 +5,7 @@ import 'package:clubtivi/data/models/show.dart';
 import 'package:clubtivi/data/models/stream_search_result.dart';
 import 'package:clubtivi/data/models/stream_source.dart';
 import 'package:clubtivi/data/services/debrid_settings.dart';
+import 'package:clubtivi/features/player/player_service.dart';
 import 'package:clubtivi/features/shows/show_detail_screen.dart';
 import 'package:clubtivi/features/shows/shows_providers.dart';
 import 'package:flutter/material.dart';
@@ -42,6 +43,16 @@ const _torrentStream = StreamSource(
   unavailableReason: kDebridRequiredReason,
 );
 
+/// Registra si la ficha suelta el canal en vivo al pedir otra reproducción.
+class _RecordingPlayerService extends PlayerService {
+  int stops = 0;
+
+  @override
+  Future<void> stop() async {
+    stops++;
+  }
+}
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -51,6 +62,7 @@ void main() {
     WidgetTester tester,
     List<StreamSource> streams, {
     List<StreamProviderFailure> failures = const [],
+    PlayerService? playerService,
   }) async {
     Map<String, dynamic>? playerExtra;
 
@@ -95,6 +107,8 @@ void main() {
             (ref, params) async =>
                 StreamSearchResult(sources: streams, failures: failures),
           ),
+          if (playerService != null)
+            playerServiceProvider.overrideWithValue(playerService),
         ],
         child: MaterialApp.router(routerConfig: router),
       ),
@@ -117,6 +131,26 @@ void main() {
 
     expect(find.text('PLAYER'), findsOneWidget);
     expect(extra()!['streamUrl'], 'https://example.com/movie.m3u8');
+  });
+
+  testWidgets('pulsar Play suelta el canal en vivo antes de resolver', (
+    tester,
+  ) async {
+    final live = _RecordingPlayerService();
+    addTearDown(live.dispose);
+    await pumpScreen(tester, const [_directStream], playerService: live);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Play'));
+    await tester.pumpAndSettle();
+
+    expect(
+      live.stops,
+      1,
+      reason: 'el canal en vivo no debe seguir sonando mientras se busca'
+          ' la fuente de la serie',
+    );
+    expect(find.text('Select Stream'), findsOneWidget);
   });
 
   testWidgets('un torrent sin debrid se explica y no navega', (tester) async {

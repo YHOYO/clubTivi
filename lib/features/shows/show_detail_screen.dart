@@ -11,6 +11,7 @@ import '../../data/models/show.dart';
 import '../../data/models/stream_search_result.dart';
 import '../../data/models/stream_source.dart';
 import '../../data/services/debrid_settings.dart';
+import '../player/player_service.dart';
 import 'shows_providers.dart';
 import 'stream_picker.dart';
 import 'trailer_player_screen.dart';
@@ -413,6 +414,9 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     List<MediaVideo> videos,
   ) async {
     if (!video.isPlayableInApp) {
+      // El navegador reproduce fuera de la app: el canal tampoco debe seguir
+      // sonando por detrás mientras se ve el vídeo.
+      await ref.read(playerServiceProvider).stop();
       final opened = await openVideoExternally(video);
       if (!opened && mounted) {
         _showSnackbar('No se pudo abrir el vídeo en el navegador');
@@ -494,6 +498,9 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
       return;
     }
     setState(() => _resolving = true);
+    // La ficha y el canal en vivo comparten altavoz: pulsar Play suelta el
+    // canal antes de resolver, no cuando el reproductor ya está encima.
+    await ref.read(playerServiceProvider).stop();
     try {
       final result = await ref.read(
         resolveStreamProvider(StreamResolveParams(show.imdbId!)).future,
@@ -517,6 +524,9 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
       return;
     }
     setState(() => _resolving = true);
+    // Igual que al reproducir la película: el canal deja de sonar al pedir el
+    // episodio, aunque la fuente tarde en resolverse.
+    await ref.read(playerServiceProvider).stop();
     try {
       final result = await ref.read(
         resolveStreamProvider(

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
@@ -5,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+
+import 'player_service.dart';
 
 /// Multi-view player — shows 1-9 streams in a flexible grid.
 /// Free feature. Tap a cell to focus audio; long-press to fullscreen.
@@ -25,6 +28,9 @@ class _MultiViewScreenState extends ConsumerState<MultiViewScreen> {
   void initState() {
     super.initState();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    // Multi-view abre sus propios motores: el canal en vivo del reproductor
+    // compartido tiene que callarse para no sumar otro audio.
+    unawaited(ref.read(playerServiceProvider).stop());
     _initPlayers();
   }
 

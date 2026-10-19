@@ -8,6 +8,7 @@ import '../../data/models/stremio_addon.dart';
 import '../../data/models/stream_search_result.dart';
 import '../../data/models/stream_source.dart';
 import '../../data/services/debrid_settings.dart';
+import '../player/player_service.dart';
 import 'shows_providers.dart';
 import 'stream_picker.dart';
 
@@ -368,6 +369,9 @@ class _StremioMetaScreenState extends ConsumerState<StremioMetaScreen> {
     final title = video == null ? meta.name : '${meta.name} ${video.code}';
 
     setState(() => _resolving = true);
+    // Igual que en la ficha de Trakt: el canal en vivo suelta el altavoz al
+    // pedir la reproducción, no medio minuto después al abrir el reproductor.
+    await ref.read(playerServiceProvider).stop();
     try {
       final result = await ref.read(addonStreamsProvider(params).future);
       if (!mounted) return;

@@ -13,6 +13,7 @@ import 'player_service.dart';
 class PlayerControlBar extends ConsumerStatefulWidget {
   final VoidCallback? onCastTap;
   final VoidCallback? onBackTap;
+  final VoidCallback? onRefresh;
   final VoidCallback? onScreenshot;
   final VoidCallback? onFavorite;
   final VoidCallback? onPip;
@@ -33,6 +34,7 @@ class PlayerControlBar extends ConsumerStatefulWidget {
     super.key,
     this.onCastTap,
     this.onBackTap,
+    this.onRefresh,
     this.onScreenshot,
     this.onFavorite,
     this.onPip,
@@ -360,6 +362,8 @@ class _PlayerControlBarState extends ConsumerState<PlayerControlBar> {
                         color: widget.isFavorite ? Colors.amber : Colors.white,
                         onTap: widget.onFavorite,
                       ),
+                      if (widget.onRefresh != null)
+                        _iconBtn(Icons.refresh, onTap: widget.onRefresh),
                       _iconBtn(Icons.picture_in_picture_alt,
                           onTap: widget.onPip),
                       _iconBtn(

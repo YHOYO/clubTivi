@@ -104,6 +104,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
   // Failover suggestion
   StreamSubscription<bool>? _bufferingSub;
   StreamSubscription<String>? _playbackErrorSub;
+  StreamSubscription<String?>? _currentUrlSub;
   StreamSubscription<List<db.Provider>>? _providersSub;
   StreamSubscription<List<db.Channel>>? _channelsSub;
   Timer? _failoverTimer;
@@ -238,6 +239,12 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
           width: 420,
         ),
       );
+    });
+    // Otra pantalla puede soltar el canal (un tráiler, una serie): la vista
+    // previa deja de fingir que sigue reproduciendo.
+    _currentUrlSub = ps.currentUrlStream.listen((url) {
+      if (url != null || !mounted || _previewChannel == null) return;
+      setState(() => _previewChannel = null);
     });
     ps.onFailover = (message) {
       if (mounted) {
@@ -829,6 +836,7 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
     _failoverTimer?.cancel();
     _bufferingSub?.cancel();
     _playbackErrorSub?.cancel();
+    _currentUrlSub?.cancel();
     _providersSub?.cancel();
     _channelsSub?.cancel();
     _longPressTimer?.cancel();
@@ -1429,6 +1437,22 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
       _previewChannel = channel;
     });
     _saveSession();
+  }
+
+  /// Reabre el canal que ya está en el preview (señal cortada, imagen
+  /// congelada o audio parado).
+  ///
+  /// `_selectChannel` ignora la fila ya seleccionada, así que sin esto había
+  /// que salir del canal y volver a entrar para forzar otra conexión.
+  void _reloadChannel(db.Channel channel) {
+    final playerService = ref.read(playerServiceProvider);
+    if (playerService.currentUrl == null ||
+        playerService.currentChannelId != channel.id) {
+      _playChannel(channel);
+      return;
+    }
+    setState(() => _previewChannel = channel);
+    unawaited(playerService.reload());
   }
 
   /// Toggle between current channel and the last channel.
@@ -2562,6 +2586,14 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
                                           tooltip: 'Play',
                                           onTap: () => _runChannelAction(
                                             'play',
+                                            _previewChannel!,
+                                          ),
+                                        ),
+                                        _previewActionButton(
+                                          icon: Icons.refresh_rounded,
+                                          tooltip: 'Reload Stream',
+                                          onTap: () => _runChannelAction(
+                                            'reload',
                                             _previewChannel!,
                                           ),
                                         ),
@@ -6908,6 +6940,16 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
           ),
         ),
         PopupMenuItem(
+          value: 'reload',
+          child: Row(
+            children: [
+              const Icon(Icons.refresh, size: 18),
+              const SizedBox(width: 8),
+              const Text('Reload Stream'),
+            ],
+          ),
+        ),
+        PopupMenuItem(
           value: 'fullscreen',
           child: Row(
             children: [
@@ -7014,6 +7056,8 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
       case 'play':
         final idx = _filteredChannels.indexOf(channel);
         if (idx >= 0) _selectChannel(idx);
+      case 'reload':
+        _reloadChannel(channel);
       case 'fullscreen':
         final idx = _filteredChannels.indexOf(channel);
         if (idx >= 0) {

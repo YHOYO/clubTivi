@@ -3,10 +3,12 @@
 // navegador.
 import 'package:clubtivi/data/models/media_video.dart';
 import 'package:clubtivi/data/models/show.dart';
+import 'package:clubtivi/features/player/player_service.dart';
 import 'package:clubtivi/features/shows/show_detail_screen.dart';
 import 'package:clubtivi/features/shows/shows_providers.dart';
 import 'package:clubtivi/features/shows/trailer_player_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -25,6 +27,21 @@ const _teaser = MediaVideo(
   language: 'en',
 );
 const _clip = MediaVideo(name: 'Escena', key: 'clipKey', kind: VideoKind.clip);
+const _externalTrailer = MediaVideo(
+  name: 'Trailer',
+  site: '',
+  kind: VideoKind.trailer,
+  externalUrl: 'https://example.com/trailer.mp4',
+);
+
+class _RecordingPlayerService extends PlayerService {
+  int stops = 0;
+
+  @override
+  Future<void> stop() async {
+    stops++;
+  }
+}
 
 final _show = Show(
   traktId: 42,
@@ -37,7 +54,12 @@ final _show = Show(
   videos: const [_trailer, _teaser, _clip],
 );
 
-Future<void> _pump(WidgetTester tester, {Show? show}) async {
+Future<_RecordingPlayerService> _pump(
+  WidgetTester tester, {
+  Show? show,
+  _RecordingPlayerService? player,
+}) async {
+  final service = player ?? _RecordingPlayerService();
   tester.view.physicalSize = const Size(1200, 1600);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -63,6 +85,7 @@ Future<void> _pump(WidgetTester tester, {Show? show}) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        playerServiceProvider.overrideWithValue(service),
         showDetailProvider.overrideWith(
           (ref, params) async => ShowDetail(show: show ?? _show),
         ),
@@ -72,6 +95,7 @@ Future<void> _pump(WidgetTester tester, {Show? show}) async {
     ),
   );
   await tester.pumpAndSettle();
+  return service;
 }
 
 void main() {
@@ -104,6 +128,36 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('TRAILER clipKey'), findsOneWidget);
+  });
+
+  testWidgets('un tráiler externo suelta el canal antes de abrir el navegador',
+      (tester) async {
+    const channel = MethodChannel('plugins.flutter.io/url_launcher');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async => true);
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    final player = _RecordingPlayerService();
+    await _pump(
+      tester,
+      player: player,
+      show: const Show(
+        traktId: 43,
+        title: 'Externo',
+        type: ShowType.movie,
+        videos: [_externalTrailer],
+      ),
+    );
+
+    await tester.tap(find.text('Tráiler').first);
+    await tester.pumpAndSettle();
+
+    expect(
+      player.stops,
+      1,
+      reason: 'el canal no puede seguir sonando detrás del navegador',
+    );
   });
 
   testWidgets('sin vídeos no aparece la sección', (tester) async {

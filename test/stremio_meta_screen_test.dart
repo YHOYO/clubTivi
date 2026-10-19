@@ -1,9 +1,12 @@
 // La ficha de un catálogo debe aprovechar lo que ya trae el catálogo, pedir
 // los episodios al addon y resolver las fuentes con el id propio del título.
+import 'dart:async';
+
 import 'package:clubtivi/data/models/stremio_addon.dart';
 import 'package:clubtivi/data/models/stream_search_result.dart';
 import 'package:clubtivi/data/models/stream_source.dart';
 import 'package:clubtivi/data/repositories/shows_repository.dart';
+import 'package:clubtivi/features/player/player_service.dart';
 import 'package:clubtivi/features/shows/shows_providers.dart';
 import 'package:clubtivi/features/shows/stremio_meta_screen.dart';
 import 'package:flutter/material.dart';
@@ -55,10 +58,21 @@ const _source = StreamSource(
   url: 'https://cdn.test/episode.mp4',
 );
 
+class _RecordingPlayerService extends PlayerService {
+  int stops = 0;
+
+  @override
+  Future<void> stop() async {
+    stops++;
+  }
+}
+
 Future<void> _pump(
   WidgetTester tester, {
   Object? metaError,
   StreamSearchResult? streams,
+  Future<StreamSearchResult>? pendingStreams,
+  PlayerService? player,
 }) async {
   tester.view.physicalSize = const Size(1200, 900);
   tester.view.devicePixelRatio = 1.0;
@@ -93,20 +107,28 @@ Future<void> _pump(
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        if (player != null) playerServiceProvider.overrideWithValue(player),
         stremioMetaProvider.overrideWith((ref, params) async {
           if (metaError != null) throw metaError;
           return _detail;
         }),
         addonStreamsProvider.overrideWith(
-          (ref, params) async =>
-              streams ?? const StreamSearchResult(sources: [_source]),
+          (ref, params) =>
+              pendingStreams ??
+              Future.value(
+                streams ?? const StreamSearchResult(sources: [_source]),
+              ),
         ),
         showsRepositoryProvider.overrideWith((ref) async => ShowsRepository()),
       ],
       child: MaterialApp.router(routerConfig: router),
     ),
   );
-  await tester.pumpAndSettle();
+  if (pendingStreams == null) {
+    await tester.pumpAndSettle();
+  } else {
+    await tester.pump();
+  }
 }
 
 void main() {
@@ -137,6 +159,27 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('PLAYER'), findsOneWidget);
+  });
+
+  testWidgets('reproducir suelta el canal antes de resolver las fuentes',
+      (tester) async {
+    final player = _RecordingPlayerService();
+    final pending = Completer<StreamSearchResult>();
+    await _pump(tester, player: player, pendingStreams: pending.future);
+
+    await tester.tap(find.textContaining('To You Two Thousand Years Later'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      player.stops,
+      1,
+      reason: 'el canal no puede seguir sonando mientras se buscan fuentes',
+    );
+    expect(find.text('Select Stream'), findsNothing);
+
+    pending.complete(const StreamSearchResult(sources: [_source]));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('si el addon no publica ficha, se queda con el catálogo',

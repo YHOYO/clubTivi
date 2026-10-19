@@ -64,6 +64,11 @@ class PlayerService {
   final StreamProxy _streamProxy = StreamProxy();
   bool _proxyActive = false;
 
+  /// Último volumen pedido por la UI. `player.state.volume` llega por el
+  /// stream de mpv y puede ir un paso por detrás; una recarga necesita el
+  /// valor intencional para no devolver el sonido a 100.
+  double _volume = 100.0;
+
   /// Whether the ffmpeg fallback has already been tried for the current stream.
   bool _formatRetryDone = false;
 
@@ -113,6 +118,19 @@ class PlayerService {
 
   bool _playerReady = false;
   final _playerReadyCompleter = Completer<void>();
+
+  /// Cada apertura lleva un turno. `stop()` lo incrementa para que una
+  /// apertura que aún estaba esperando no vuelva a arrancar el motor después
+  /// de haberlo parado (el audio fantasma al salir mientras carga).
+  int _generation = 0;
+
+  /// ¿Otra apertura tomó el turno mientras ésta esperaba? Si además nadie
+  /// reclamó el motor (fue un `stop()`), lo apaga para no dejar audio detrás.
+  Future<bool> _isSuperseded(int generation) async {
+    if (generation == _generation) return false;
+    if (_currentUrl == null) await _player?.stop();
+    return true;
+  }
 
   Player get player {
     if (_player == null) {
@@ -173,6 +191,28 @@ class PlayerService {
   void configureFailover(StreamAlternativesService? alternatives, StreamHealthTracker? health) {
     _alternatives = alternatives;
     _healthTracker = health;
+    _failoverResolved = true;
+  }
+
+  /// Deja la conexión de failover para el primer `play()`.
+  ///
+  /// Construir el servicio (por ejemplo, para pararlo desde otra pantalla) no
+  /// debe abrir la base de datos ni los servicios de salud de streams.
+  void configureFailoverLazily(void Function() resolve) {
+    _resolveFailover = resolve;
+  }
+
+  bool _failoverResolved = false;
+  void Function()? _resolveFailover;
+
+  void _ensureFailover() {
+    if (_failoverResolved) return;
+    _failoverResolved = true;
+    try {
+      _resolveFailover?.call();
+    } catch (_) {
+      // Sin failover se puede reproducir igual.
+    }
   }
 
   // Failover group override: manual alternatives from user-created groups
@@ -189,6 +229,8 @@ class PlayerService {
     List<String>? failoverGroupUrls,
     Map<String, String>? httpHeaders,
   }) async {
+    final generation = ++_generation;
+    _ensureFailover();
     _httpHeaders = httpHeaders ?? const {};
     _isBuffering = false;
     _bufferStartTime = null;
@@ -218,10 +260,15 @@ class PlayerService {
     _formatRetryDone = false;
     _bufferProgress.begin();
     await _streamProxy.stop();
+    if (generation != _generation) return;
     await _ensureReady();
     await _applyHttpHeaders();
+    if (generation != _generation) return;
     await player.open(Media(url));
+    // Otra pantalla pudo tomar el mando mientras se abría.
+    if (await _isSuperseded(generation)) return;
     await _bufferManager.applyForStream(url, this);
+    _volume = 100.0;
     await player.setVolume(100.0);
 
     // Check for missing audio after a brief delay and retry through
@@ -364,14 +411,16 @@ class PlayerService {
   /// Re-open the stream through the local ffmpeg proxy.
   Future<void> _retryWithProxy(String originalUrl) async {
     if (_proxyActive) return; // Avoid recursive retry
+    // El reintento tarda (arrancar ffmpeg) y puede quedar obsoleto mientras
+    // espera: si otra apertura tomó el turno, no debe reabrir el flujo.
+    final generation = _generation;
     final proxyUrl =
         await _streamProxy.start(originalUrl, headers: _httpHeaders);
     if (proxyUrl == null) {
       debugPrint('[Player] ffmpeg proxy unavailable, keeping direct playback');
       return;
     }
-    // Verify the stream URL hasn't changed while we were starting the proxy
-    if (_currentUrl != originalUrl) {
+    if (generation != _generation || _currentUrl != originalUrl) {
       await _streamProxy.stop();
       return;
     }
@@ -381,6 +430,7 @@ class PlayerService {
     _bufferProgress.markConverting();
     debugPrint('[Player] Switching to proxied stream: $proxyUrl');
     await player.open(Media(proxyUrl));
+    if (await _isSuperseded(generation)) return;
     await _bufferManager.applyForStream(originalUrl, this);
     await player.setVolume(100.0);
   }
@@ -393,10 +443,78 @@ class PlayerService {
   Stream<int> get audioTrackCountStream =>
       player.stream.tracks.map((t) => t.audio.length);
 
-  /// Stop playback.
+  /// Reabre el flujo actual sin salir del reproductor: señal perdida, imagen
+  /// congelada o audio parado.
+  ///
+  /// Conserva canal, cabeceras, grupo de failover y volumen; `play()` vuelve a
+  /// montar el resto (búfer, proxy, errores) como si se hubiera elegido el
+  /// canal otra vez.
+  Future<void> reload() async {
+    final url = _currentUrl;
+    if (url == null || url.isEmpty) return;
+    final volume = _volume;
+    final generation = _generation;
+    await play(
+      url,
+      channelId: _currentChannelId,
+      epgChannelId: _currentEpgChannelId,
+      tvgId: _currentTvgId,
+      channelName: _currentChannelName,
+      vanityName: _currentVanityName,
+      originalName: _currentOriginalName,
+      failoverGroupUrls: _failoverGroupUrls,
+      httpHeaders: _httpHeaders,
+    );
+    // `play()` deja el volumen a 100; recargar no debe subirlo de golpe.
+    if (_generation == generation + 1) {
+      _volume = volume;
+      await _player?.setVolume(volume);
+    }
+  }
+
+  /// Detiene la reproducción y suelta el canal: no queda ningún motor sonando
+  /// ni metadatos de un canal que ya no se está viendo.
+  ///
+  /// Es el punto que usan las demás pantallas antes de abrir otro vídeo, para
+  /// que el canal en vivo no siga detrás del tráiler o de una serie.
   Future<void> stop() async {
+    final generation = ++_generation;
+    _failoverCheckTimer?.cancel();
+    _failoverCheckTimer = null;
+    _disposeWarmPlayer();
     _bufferManager.stop();
-    await player.stop();
+    _bufferProgress.stop();
+    _tracksSub?.cancel();
+    _errorSub?.cancel();
+    // Sin reiniciar la bandera, el siguiente `play()` no volvería a enganchar
+    // el tracking de búfer (startBufferTracking sale antes si ya está activo).
+    _bufferTrackSub?.cancel();
+    _bufferTrackSub = null;
+    _bufferTrackTimer?.cancel();
+    _bufferTrackTimer = null;
+    _trackingBuffering = false;
+    _isBuffering = false;
+    _bufferStartTime = null;
+    _playStartedAt = null;
+    _consecutiveLowBuffer = 0;
+    _lastTimePos = null;
+    _stagnantTicks = 0;
+    _failoverGroupUrls = null;
+    _proxyActive = false;
+    _currentUrl = null;
+    _currentChannelId = null;
+    _currentEpgChannelId = null;
+    _currentTvgId = null;
+    _currentChannelName = null;
+    _currentVanityName = null;
+    _currentOriginalName = null;
+    _currentUrlController.add(null);
+    await _streamProxy.stop();
+    // Otra reproducción pudo empezar mientras ffmpeg se apagaba: su motor
+    // manda y no se toca.
+    if (generation != _generation) return;
+    // `player` se crea bajo demanda: no se instancia un motor sólo para pararlo.
+    await _player?.stop();
   }
 
   /// Pause playback.
@@ -411,7 +529,8 @@ class PlayerService {
 
   /// Set volume (0.0 - 100.0).
   Future<void> setVolume(double volume) async {
-    await player.setVolume(volume.clamp(0.0, 100.0));
+    _volume = volume.clamp(0.0, 100.0);
+    await player.setVolume(_volume);
   }
 
   /// Stream of buffering state changes.
@@ -668,6 +787,7 @@ class PlayerService {
 
   Future<void> _autoFailover() async {
     if (_currentUrl == null) return;
+    final generation = _generation;
     if (_alternatives == null && (_failoverGroupUrls == null || _failoverGroupUrls!.isEmpty)) return;
 
     // If warm player is ready, do an instant switch
@@ -686,7 +806,9 @@ class PlayerService {
       _currentUrl = newUrl;
       _proxyActive = false;
       await _streamProxy.stop();
+      if (generation != _generation) return;
       await player.open(Media(newUrl));
+      if (await _isSuperseded(generation)) return;
       await _bufferManager.applyForStream(newUrl, this);
       _startFailoverMonitor();
 
@@ -712,7 +834,9 @@ class PlayerService {
     _currentUrl = newUrl;
     _proxyActive = false;
     await _streamProxy.stop();
+    if (generation != _generation) return;
     await player.open(Media(newUrl));
+    if (await _isSuperseded(generation)) return;
     await _bufferManager.applyForStream(newUrl, this);
     _startFailoverMonitor();
 
@@ -722,6 +846,8 @@ class PlayerService {
   }
 
   void dispose() {
+    // Cualquier apertura en vuelo queda invalidada antes de soltar el motor.
+    _generation++;
     _bufferManager.stop();
     _bufferProgress.dispose();
     _tracksSub?.cancel();
@@ -749,14 +875,14 @@ final playerServiceProvider = Provider<PlayerService>((ref) {
       // El historial es un extra: que no tumbe la reproducción.
     }
   };
-  // Inject failover services
-  try {
-    final alternatives = ref.read(streamAlternativesProvider);
-    final health = ref.read(streamHealthTrackerProvider);
-    service.configureFailover(alternatives, health);
-  } catch (_) {
-    // Services may not be available yet — failover will be disabled
-  }
+  // El failover se conecta en el primer `play()`, no al construir el
+  // servicio: abrir la ficha o pararlo no debe tocar base de datos ni red.
+  service.configureFailoverLazily(() {
+    service.configureFailover(
+      ref.read(streamAlternativesProvider),
+      ref.read(streamHealthTrackerProvider),
+    );
+  });
   ref.onDispose(() => service.dispose());
   return service;
 });
