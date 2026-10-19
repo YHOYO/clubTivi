@@ -21,7 +21,7 @@ const String _repo = String.fromEnvironment(
 /// pubspec.yaml, which is what the release tag is derived from; the release
 /// assistant bumps both, and test/version_consistency_test.dart fails if they
 /// ever drift apart.
-const _currentVersion = '0.4.3';
+const _currentVersion = '0.5.0';
 
 /// Everything the app needs from a published release: its notes, the APK for
 /// Android, and the portable ZIP with the manifest that proves its checksum.

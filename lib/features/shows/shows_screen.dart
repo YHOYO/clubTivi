@@ -6,6 +6,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:go_router/go_router.dart';
 import '../../data/models/show.dart';
 import '../../data/models/stremio_addon.dart';
+import '../../data/services/tmdb_language_store.dart';
 import 'shows_providers.dart';
 
 /// Main shows screen with poster grid organized by category
@@ -88,56 +89,65 @@ class _ShowsScreenState extends ConsumerState<ShowsScreen> {
       child: Focus(
         autofocus: !Platform.isAndroid,
         child: Scaffold(
-      backgroundColor: const Color(0xFF0A0A1A),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.movie_outlined, size: 64, color: Color(0xFF6C5CE7)),
-              const SizedBox(height: 24),
-              const Text(
-                'Shows & Movies',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                ),
+          backgroundColor: const Color(0xFF0A0A1A),
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.movie_outlined,
+                    size: 64,
+                    color: Color(0xFF6C5CE7),
+                  ),
+                  const SizedBox(height: 24),
+                  const Text(
+                    'Shows & Movies',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Add a Trakt or TMDB API key in Settings to browse trending '
+                    'shows and movies, or install a Stremio addon with catalogs '
+                    '(anime, Spanish movies…).',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white60, fontSize: 16),
+                  ),
+                  const SizedBox(height: 32),
+                  ElevatedButton.icon(
+                    autofocus: true,
+                    onPressed: () => context.go('/settings'),
+                    icon: const Icon(Icons.settings),
+                    label: const Text('Go to Settings'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF6C5CE7),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 32,
+                        vertical: 16,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextButton.icon(
+                    onPressed: () => context.go('/stremio-addons'),
+                    icon: const Icon(Icons.extension_rounded),
+                    label: const Text('Install Stremio addons'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.white70,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
-              const Text(
-                'Add a Trakt or TMDB API key in Settings to browse trending '
-                'shows and movies, or install a Stremio addon with catalogs '
-                '(anime, Spanish movies…).',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white60, fontSize: 16),
-              ),
-              const SizedBox(height: 32),
-              ElevatedButton.icon(
-                autofocus: true,
-                onPressed: () => context.go('/settings'),
-                icon: const Icon(Icons.settings),
-                label: const Text('Go to Settings'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF6C5CE7),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextButton.icon(
-                onPressed: () => context.go('/stremio-addons'),
-                icon: const Icon(Icons.extension_rounded),
-                label: const Text('Install Stremio addons'),
-                style: TextButton.styleFrom(foregroundColor: Colors.white70),
-              ),
-            ],
+            ),
           ),
         ),
       ),
-    ),
-    ),
     );
   }
 
@@ -160,6 +170,10 @@ class _ShowsScreenState extends ConsumerState<ShowsScreen> {
             ),
           ),
           const Spacer(),
+          if (ref.watch(showsApiKeysProvider).hasTmdbKey) ...[
+            _buildLanguageSelector(),
+            const SizedBox(width: 8),
+          ],
           IconButton(
             icon: Icon(
               _isSearching ? Icons.close : Icons.search,
@@ -176,6 +190,69 @@ class _ShowsScreenState extends ConsumerState<ShowsScreen> {
             },
           ),
         ],
+      ),
+    );
+  }
+
+  /// Selector del idioma de los metadatos de TMDB. Cambiarlo persiste la
+  /// preferencia y reconstruye el repositorio, que vuelve a pedir catálogos.
+  Widget _buildLanguageSelector() {
+    final code = ref.watch(tmdbLanguageProvider);
+    final current = tmdbLanguageFor(code);
+    return PopupMenuButton<String>(
+      tooltip: 'Idioma de títulos, sinopsis y tráilers (TMDB)',
+      onSelected: (value) async {
+        await ref.read(tmdbLanguageProvider.notifier).select(value);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Shows & Movies en ${tmdbLanguageFor(value).label}'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      },
+      itemBuilder: (context) => [
+        for (final language in tmdbLanguages)
+          PopupMenuItem<String>(
+            value: language.code,
+            child: Row(
+              children: [
+                Icon(
+                  language.code == code ? Icons.check : Icons.translate,
+                  size: 16,
+                  color: language.code == code
+                      ? const Color(0xFF6C5CE7)
+                      : Colors.white38,
+                ),
+                const SizedBox(width: 10),
+                Text(language.label),
+              ],
+            ),
+          ),
+      ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A1A2E),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.language, size: 16, color: Colors.white70),
+            const SizedBox(width: 6),
+            Text(
+              current.code,
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const Icon(Icons.arrow_drop_down, size: 18, color: Colors.white38),
+          ],
+        ),
       ),
     );
   }
@@ -293,9 +370,7 @@ class _ShowsScreenState extends ConsumerState<ShowsScreen> {
         .watch(enabledStremioAddonsProvider)
         .any((addon) => addon.hasCatalogs);
     if (!hasAddons) {
-      return _AddonEmptyState(
-        onInstall: () => context.push('/stremio-addons'),
-      );
+      return _AddonEmptyState(onInstall: () => context.push('/stremio-addons'));
     }
 
     final specs = ref.watch(stremioCatalogSpecsProvider);
@@ -392,7 +467,9 @@ class _ShowsScreenState extends ConsumerState<ShowsScreen> {
     if (event is KeyDownEvent) {
       // Don't intercept keys when a text field is focused
       final primaryFocus = FocusManager.instance.primaryFocus;
-      if (primaryFocus?.context?.findAncestorWidgetOfExactType<EditableText>() != null) {
+      if (primaryFocus?.context
+              ?.findAncestorWidgetOfExactType<EditableText>() !=
+          null) {
         if (event.logicalKey == LogicalKeyboardKey.escape) {
           primaryFocus!.unfocus();
         }
@@ -428,16 +505,18 @@ class _ShowPosterCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final isFav = ref.watch(favoritesProvider.select(
-      (favs) => favs.any((s) => s.traktId == show.traktId),
-    ));
+    final isFav = ref.watch(
+      favoritesProvider.select(
+        (favs) => favs.any((s) => s.traktId == show.traktId),
+      ),
+    );
 
     return Focus(
       onKeyEvent: (node, event) {
         if (event is KeyDownEvent &&
             (event.logicalKey == LogicalKeyboardKey.select ||
-             event.logicalKey == LogicalKeyboardKey.enter ||
-             event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
+                event.logicalKey == LogicalKeyboardKey.enter ||
+                event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
           onTap();
           return KeyEventResult.handled;
         }
@@ -452,7 +531,10 @@ class _ShowPosterCard extends ConsumerWidget {
               decoration: hasFocus
                   ? BoxDecoration(
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: const Color(0xFF6C5CE7), width: 2),
+                      border: Border.all(
+                        color: const Color(0xFF6C5CE7),
+                        width: 2,
+                      ),
                     )
                   : null,
               child: Column(
@@ -463,7 +545,9 @@ class _ShowPosterCard extends ConsumerWidget {
                       children: [
                         ClipRRect(
                           borderRadius: BorderRadius.circular(8),
-                          child: show.posterUrl != null && show.posterUrl!.isNotEmpty
+                          child:
+                              show.posterUrl != null &&
+                                  show.posterUrl!.isNotEmpty
                               ? CachedNetworkImage(
                                   imageUrl: show.posterUrl!,
                                   fit: BoxFit.cover,
@@ -472,10 +556,15 @@ class _ShowPosterCard extends ConsumerWidget {
                                   placeholder: (_, _) => Container(
                                     color: const Color(0xFF1A1A2E),
                                     child: const Center(
-                                      child: Icon(Icons.movie, color: Colors.white24, size: 40),
+                                      child: Icon(
+                                        Icons.movie,
+                                        color: Colors.white24,
+                                        size: 40,
+                                      ),
                                     ),
                                   ),
-                                  errorWidget: (_, _, _) => _placeholderPoster(),
+                                  errorWidget: (_, _, _) =>
+                                      _placeholderPoster(),
                                 )
                               : _placeholderPoster(),
                         ),
@@ -484,7 +573,9 @@ class _ShowPosterCard extends ConsumerWidget {
                           top: 4,
                           right: 4,
                           child: GestureDetector(
-                            onTap: () => ref.read(favoritesProvider.notifier).toggle(show),
+                            onTap: () => ref
+                                .read(favoritesProvider.notifier)
+                                .toggle(show),
                             child: Container(
                               padding: const EdgeInsets.all(4),
                               decoration: BoxDecoration(
@@ -493,7 +584,9 @@ class _ShowPosterCard extends ConsumerWidget {
                               ),
                               child: Icon(
                                 isFav ? Icons.favorite : Icons.favorite_border,
-                                color: isFav ? Colors.redAccent : Colors.white70,
+                                color: isFav
+                                    ? Colors.redAccent
+                                    : Colors.white70,
                                 size: 18,
                               ),
                             ),
@@ -516,7 +609,10 @@ class _ShowPosterCard extends ConsumerWidget {
                   if (show.year != null)
                     Text(
                       '${show.year}${show.rating != null ? ' • ★ ${show.rating!.toStringAsFixed(1)}' : ''}',
-                      style: const TextStyle(color: Colors.white38, fontSize: 11),
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                      ),
                     ),
                 ],
               ),
@@ -580,7 +676,11 @@ class _AddonEmptyState extends StatelessWidget {
               'Install an addon with catalogs (AnimeFLV, Kitsu…) to browse '
               'its content here.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white38, fontSize: 13, height: 1.4),
+              style: TextStyle(
+                color: Colors.white38,
+                fontSize: 13,
+                height: 1.4,
+              ),
             ),
             const SizedBox(height: 20),
             FilledButton.icon(
@@ -605,11 +705,7 @@ class _CatalogRail extends ConsumerStatefulWidget {
   final AddonCatalogSpec spec;
   final void Function(StremioMeta meta) onOpen;
 
-  const _CatalogRail({
-    super.key,
-    required this.spec,
-    required this.onOpen,
-  });
+  const _CatalogRail({super.key, required this.spec, required this.onOpen});
 
   @override
   ConsumerState<_CatalogRail> createState() => _CatalogRailState();
@@ -634,11 +730,11 @@ class _CatalogRailState extends ConsumerState<_CatalogRail> {
   }
 
   AddonCatalogParams get _params => AddonCatalogParams(
-        addonUrl: widget.spec.addon.url,
-        catalogType: widget.spec.catalog.type,
-        catalogId: widget.spec.catalog.id,
-        genre: _genre,
-      );
+    addonUrl: widget.spec.addon.url,
+    catalogType: widget.spec.catalog.type,
+    catalogId: widget.spec.catalog.id,
+    genre: _genre,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -672,10 +768,7 @@ class _CatalogRailState extends ConsumerState<_CatalogRail> {
                 Flexible(
                   child: Text(
                     spec.addon.name,
-                    style: const TextStyle(
-                      color: Colors.white38,
-                      fontSize: 12,
-                    ),
+                    style: const TextStyle(color: Colors.white38, fontSize: 12),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -747,11 +840,7 @@ class _CatalogRailState extends ConsumerState<_CatalogRail> {
               _genre ?? 'Genre',
               style: const TextStyle(color: Colors.white60, fontSize: 12),
             ),
-            const Icon(
-              Icons.arrow_drop_down,
-              color: Colors.white38,
-              size: 18,
-            ),
+            const Icon(Icons.arrow_drop_down, color: Colors.white38, size: 18),
           ],
         ),
       ),

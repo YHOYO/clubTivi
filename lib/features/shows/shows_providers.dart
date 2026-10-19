@@ -14,6 +14,7 @@ import '../../data/services/debrid_settings.dart';
 import '../../data/services/language_preferences_store.dart';
 import '../../data/services/stremio_addon_settings.dart';
 import '../../data/services/stream_ranker.dart';
+import '../../data/services/tmdb_language_store.dart';
 
 // SharedPreferences keys for API credentials
 const _kTraktClientId = 'shows_trakt_client_id';
@@ -22,8 +23,9 @@ const _kTmdbApiKey = 'shows_tmdb_api_key';
 /// Cliente compartido del protocolo Stremio: lo usan tanto la búsqueda de
 /// fuentes como la pantalla de instalación, y en tests se sustituye por un
 /// doble sin tocar la red.
-final stremioAddonClientProvider =
-    Provider<StremioAddonClient>((ref) => StremioAddonClient());
+final stremioAddonClientProvider = Provider<StremioAddonClient>(
+  (ref) => StremioAddonClient(),
+);
 
 /// Addons que se van a consultar, en orden de prioridad: un addon deshabilitado
 /// no llega nunca al repositorio.
@@ -51,13 +53,14 @@ final showsRepositoryProvider = FutureProvider<ShowsRepository>((ref) async {
   final debridSettings = ref.watch(debridSettingsProvider);
   final addons = ref.watch(enabledStreamAddonsProvider);
   final stremioClient = ref.watch(stremioAddonClientProvider);
+  // Cambiar el idioma reconstruye el repositorio y, con él, todos los
+  // catálogos y fichas que dependen de TMDB.
+  final tmdbLanguage = ref.watch(tmdbLanguageProvider);
 
   return ShowsRepository(
-    trakt: keys.hasTraktKey
-        ? TraktClient(clientId: keys.traktClientId)
-        : null,
+    trakt: keys.hasTraktKey ? TraktClient(clientId: keys.traktClientId) : null,
     tmdb: keys.hasTmdbKey
-        ? TmdbClient(apiKey: keys.tmdbApiKey)
+        ? TmdbClient(apiKey: keys.tmdbApiKey, language: tmdbLanguage)
         : null,
     debridServices: [
       for (final config in debridSettings.enabledServices)
@@ -104,11 +107,12 @@ final showSearchResultsProvider = FutureProvider<List<Show>>((ref) async {
 });
 
 /// Show detail provider (family — parameterized by trakt ID + type)
-final showDetailProvider =
-    FutureProvider.family<ShowDetail?, ShowDetailParams>((ref, params) async {
-  final repo = await ref.watch(showsRepositoryProvider.future);
-  return repo.getShowDetail(params.traktId, type: params.type);
-});
+final showDetailProvider = FutureProvider.family<ShowDetail?, ShowDetailParams>(
+  (ref, params) async {
+    final repo = await ref.watch(showsRepositoryProvider.future);
+    return repo.getShowDetail(params.traktId, type: params.type);
+  },
+);
 
 class ShowDetailParams {
   final int traktId;
@@ -118,15 +122,19 @@ class ShowDetailParams {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is ShowDetailParams && traktId == other.traktId && type == other.type;
+      other is ShowDetailParams &&
+          traktId == other.traktId &&
+          type == other.type;
 
   @override
   int get hashCode => traktId.hashCode ^ type.hashCode;
 }
 
 /// Episodes for a season
-final episodesProvider =
-    FutureProvider.family<List<Episode>, EpisodeParams>((ref, params) async {
+final episodesProvider = FutureProvider.family<List<Episode>, EpisodeParams>((
+  ref,
+  params,
+) async {
   final repo = await ref.watch(showsRepositoryProvider.future);
   return repo.getEpisodes(params.traktId, params.season);
 });
@@ -139,7 +147,9 @@ class EpisodeParams {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is EpisodeParams && traktId == other.traktId && season == other.season;
+      other is EpisodeParams &&
+          traktId == other.traktId &&
+          season == other.season;
 
   @override
   int get hashCode => traktId.hashCode ^ season.hashCode;
@@ -150,20 +160,24 @@ class EpisodeParams {
 /// puro; el provider solo lo compone con el repositorio y recorta a las 10
 /// mejores para la pantalla actual.
 final resolveStreamProvider =
-    FutureProvider.family<StreamSearchResult, StreamResolveParams>((ref, params) async {
-  final preferences = ref.watch(languagePreferencesProvider);
-  final repo = await ref.watch(showsRepositoryProvider.future);
-  final result = await repo.resolveStreams(
-    imdbId: params.imdbId,
-    season: params.season,
-    episode: params.episode,
-  );
-  return result.copyWith(
-    sources: rankStreams(result.sources, preferences)
-        .take(10)
-        .toList(growable: false),
-  );
-});
+    FutureProvider.family<StreamSearchResult, StreamResolveParams>((
+      ref,
+      params,
+    ) async {
+      final preferences = ref.watch(languagePreferencesProvider);
+      final repo = await ref.watch(showsRepositoryProvider.future);
+      final result = await repo.resolveStreams(
+        imdbId: params.imdbId,
+        season: params.season,
+        episode: params.episode,
+      );
+      return result.copyWith(
+        sources: rankStreams(
+          result.sources,
+          preferences,
+        ).take(10).toList(growable: false),
+      );
+    });
 
 class StreamResolveParams {
   final String imdbId;
@@ -180,7 +194,8 @@ class StreamResolveParams {
           episode == other.episode;
 
   @override
-  int get hashCode => imdbId.hashCode ^ (season ?? 0).hashCode ^ (episode ?? 0).hashCode;
+  int get hashCode =>
+      imdbId.hashCode ^ (season ?? 0).hashCode ^ (episode ?? 0).hashCode;
 }
 
 /// Un catálogo que se va a pintar en el descubrimiento.
@@ -261,35 +276,39 @@ final stremioCatalogSpecsProvider = Provider<List<AddonCatalogSpec>>((ref) {
 
 /// Primera página de una fila. El género viaja en los parámetros para que la
 /// propia fila pueda cambiarlo sin recargar las demás.
-final addonCatalogRowProvider = FutureProvider.family<AddonCatalogRow,
-    AddonCatalogParams>((ref, params) async {
-  final addon = ref
-      .watch(stremioAddonSettingsProvider)
-      .byUrl(params.addonUrl);
-  if (addon == null) {
-    throw const StremioAddonException(
-      'Ese addon ya no está instalado. Vuelve a instalarlo para ver su catálogo.',
-    );
-  }
-  StremioCatalog? catalog;
-  for (final candidate in addon.catalogs) {
-    if (candidate.type == params.catalogType && candidate.id == params.catalogId) {
-      catalog = candidate;
-      break;
-    }
-  }
-  if (catalog == null) {
-    throw const StremioAddonException(
-      'El addon ya no publica ese catálogo. Actualízalo desde Stremio Addons.',
-    );
-  }
-  return _loadRow(
-    ref.watch(stremioAddonClientProvider),
-    addon,
-    catalog,
-    params.genre,
-  );
-});
+final addonCatalogRowProvider =
+    FutureProvider.family<AddonCatalogRow, AddonCatalogParams>((
+      ref,
+      params,
+    ) async {
+      final addon = ref
+          .watch(stremioAddonSettingsProvider)
+          .byUrl(params.addonUrl);
+      if (addon == null) {
+        throw const StremioAddonException(
+          'Ese addon ya no está instalado. Vuelve a instalarlo para ver su catálogo.',
+        );
+      }
+      StremioCatalog? catalog;
+      for (final candidate in addon.catalogs) {
+        if (candidate.type == params.catalogType &&
+            candidate.id == params.catalogId) {
+          catalog = candidate;
+          break;
+        }
+      }
+      if (catalog == null) {
+        throw const StremioAddonException(
+          'El addon ya no publica ese catálogo. Actualízalo desde Stremio Addons.',
+        );
+      }
+      return _loadRow(
+        ref.watch(stremioAddonClientProvider),
+        addon,
+        catalog,
+        params.genre,
+      );
+    });
 
 class AddonCatalogParams {
   final String addonUrl;
@@ -343,21 +362,19 @@ Future<AddonCatalogRow> _loadRow(
 
 /// Ficha completa desde el addon del catálogo. Null = el addon no publica
 /// `meta`; la pantalla mantiene entonces los datos del catálogo.
-final stremioMetaProvider =
-    FutureProvider.family<StremioMeta?, StremioMetaParams>((ref, params) async {
-  final addon = ref
-      .watch(stremioAddonSettingsProvider)
-      .byUrl(params.addonUrl);
+final stremioMetaProvider = FutureProvider.family<StremioMeta?, StremioMetaParams>((
+  ref,
+  params,
+) async {
+  final addon = ref.watch(stremioAddonSettingsProvider).byUrl(params.addonUrl);
   if (addon == null) {
     throw const StremioAddonException(
       'Ese addon ya no está instalado. Vuelve a instalarlo para abrir su ficha.',
     );
   }
-  return ref.watch(stremioAddonClientProvider).fetchMeta(
-        addon: addon,
-        type: params.type,
-        id: params.id,
-      );
+  return ref
+      .watch(stremioAddonClientProvider)
+      .fetchMeta(addon: addon, type: params.type, id: params.id);
 });
 
 class StremioMetaParams {
@@ -386,23 +403,26 @@ class StremioMetaParams {
 /// Fuentes de un título de catálogo, consultadas a los addons con su id propio
 /// (`kitsu:7442:1`) y a Torrentio cuando la ficha trae un id IMDB.
 final addonStreamsProvider =
-    FutureProvider.family<StreamSearchResult, AddonStreamParams>(
-        (ref, params) async {
-  final preferences = ref.watch(languagePreferencesProvider);
-  final repo = await ref.watch(showsRepositoryProvider.future);
-  final result = await repo.resolveStreams(
-    imdbId: params.imdbId,
-    season: params.season,
-    episode: params.episode,
-    addonType: params.addonType,
-    addonId: params.addonId,
-  );
-  return result.copyWith(
-    sources: rankStreams(result.sources, preferences)
-        .take(10)
-        .toList(growable: false),
-  );
-});
+    FutureProvider.family<StreamSearchResult, AddonStreamParams>((
+      ref,
+      params,
+    ) async {
+      final preferences = ref.watch(languagePreferencesProvider);
+      final repo = await ref.watch(showsRepositoryProvider.future);
+      final result = await repo.resolveStreams(
+        imdbId: params.imdbId,
+        season: params.season,
+        episode: params.episode,
+        addonType: params.addonType,
+        addonId: params.addonId,
+      );
+      return result.copyWith(
+        sources: rankStreams(
+          result.sources,
+          preferences,
+        ).take(10).toList(growable: false),
+      );
+    });
 
 class AddonStreamParams {
   final String addonType;
@@ -430,8 +450,7 @@ class AddonStreamParams {
           episode == other.episode;
 
   @override
-  int get hashCode =>
-      Object.hash(addonType, addonId, imdbId, season, episode);
+  int get hashCode => Object.hash(addonType, addonId, imdbId, season, episode);
 }
 
 /// API keys configuration state
@@ -453,10 +472,7 @@ class ShowsApiKeysNotifier extends StateNotifier<ShowsApiKeys> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kTraktClientId, traktClientId);
     await prefs.setString(_kTmdbApiKey, tmdbApiKey);
-    state = ShowsApiKeys(
-      traktClientId: traktClientId,
-      tmdbApiKey: tmdbApiKey,
-    );
+    state = ShowsApiKeys(traktClientId: traktClientId, tmdbApiKey: tmdbApiKey);
   }
 }
 
@@ -465,10 +481,7 @@ class ShowsApiKeys {
   final String traktClientId;
   final String tmdbApiKey;
 
-  const ShowsApiKeys({
-    this.traktClientId = '',
-    this.tmdbApiKey = '',
-  });
+  const ShowsApiKeys({this.traktClientId = '', this.tmdbApiKey = ''});
 
   bool get isConfigured => traktClientId.isNotEmpty && tmdbApiKey.isNotEmpty;
   bool get hasTraktKey => traktClientId.isNotEmpty;
@@ -477,10 +490,10 @@ class ShowsApiKeys {
 
 final showsApiKeysProvider =
     StateNotifierProvider<ShowsApiKeysNotifier, ShowsApiKeys>((ref) {
-  final notifier = ShowsApiKeysNotifier();
-  notifier.load();
-  return notifier;
-});
+      final notifier = ShowsApiKeysNotifier();
+      notifier.load();
+      return notifier;
+    });
 
 // --- Favorites ---
 
@@ -496,7 +509,9 @@ class FavoritesNotifier extends StateNotifier<List<Show>> {
     if (raw == null || raw.isEmpty) return;
     try {
       final list = jsonDecode(raw) as List;
-      state = list.map((e) => _showFromJson(e as Map<String, dynamic>)).toList();
+      state = list
+          .map((e) => _showFromJson(e as Map<String, dynamic>))
+          .toList();
     } catch (_) {
       // Corrupted data — start fresh
     }
@@ -521,42 +536,43 @@ class FavoritesNotifier extends StateNotifier<List<Show>> {
   }
 
   static Map<String, dynamic> _showToJson(Show s) => {
-        'traktId': s.traktId,
-        'imdbId': s.imdbId,
-        'tmdbId': s.tmdbId,
-        'title': s.title,
-        'year': s.year,
-        'overview': s.overview,
-        'rating': s.rating,
-        'posterUrl': s.posterUrl,
-        'backdropUrl': s.backdropUrl,
-        'type': s.type == ShowType.movie ? 'movie' : 'show',
-        'genres': s.genres,
-        'network': s.network,
-        'status': s.status,
-        'runtime': s.runtime,
-      };
+    'traktId': s.traktId,
+    'imdbId': s.imdbId,
+    'tmdbId': s.tmdbId,
+    'title': s.title,
+    'year': s.year,
+    'overview': s.overview,
+    'rating': s.rating,
+    'posterUrl': s.posterUrl,
+    'backdropUrl': s.backdropUrl,
+    'type': s.type == ShowType.movie ? 'movie' : 'show',
+    'genres': s.genres,
+    'network': s.network,
+    'status': s.status,
+    'runtime': s.runtime,
+  };
 
   static Show _showFromJson(Map<String, dynamic> j) => Show(
-        traktId: j['traktId'] as int,
-        imdbId: j['imdbId'] as String?,
-        tmdbId: j['tmdbId'] as int?,
-        title: j['title'] as String? ?? '',
-        year: j['year'] as int?,
-        overview: j['overview'] as String?,
-        rating: (j['rating'] as num?)?.toDouble(),
-        posterUrl: j['posterUrl'] as String?,
-        backdropUrl: j['backdropUrl'] as String?,
-        type: j['type'] == 'movie' ? ShowType.movie : ShowType.show,
-        genres: (j['genres'] as List?)?.cast<String>() ?? const [],
-        network: j['network'] as String?,
-        status: j['status'] as String?,
-        runtime: j['runtime'] as int?,
-      );
+    traktId: j['traktId'] as int,
+    imdbId: j['imdbId'] as String?,
+    tmdbId: j['tmdbId'] as int?,
+    title: j['title'] as String? ?? '',
+    year: j['year'] as int?,
+    overview: j['overview'] as String?,
+    rating: (j['rating'] as num?)?.toDouble(),
+    posterUrl: j['posterUrl'] as String?,
+    backdropUrl: j['backdropUrl'] as String?,
+    type: j['type'] == 'movie' ? ShowType.movie : ShowType.show,
+    genres: (j['genres'] as List?)?.cast<String>() ?? const [],
+    network: j['network'] as String?,
+    status: j['status'] as String?,
+    runtime: j['runtime'] as int?,
+  );
 }
 
-final favoritesProvider =
-    StateNotifierProvider<FavoritesNotifier, List<Show>>((ref) {
+final favoritesProvider = StateNotifierProvider<FavoritesNotifier, List<Show>>((
+  ref,
+) {
   final notifier = FavoritesNotifier();
   notifier.load();
   return notifier;

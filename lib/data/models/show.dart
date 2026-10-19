@@ -1,5 +1,7 @@
 import 'package:equatable/equatable.dart';
 
+import 'media_video.dart';
+
 /// Represents a TV show or movie from Trakt/TMDB
 class Show extends Equatable {
   final int traktId;
@@ -15,7 +17,13 @@ class Show extends Equatable {
   final List<String> genres;
   final String? posterUrl;
   final String? backdropUrl;
+
+  /// Tráiler suelto que anota Trakt (clave o URL de YouTube).
   final String? trailer;
+
+  /// Vídeos promocionales que publica TMDB, ordenados por interés.
+  final List<MediaVideo> videos;
+
   final int? runtime; // minutes
   final ShowType type;
   final DateTime? firstAired;
@@ -35,6 +43,7 @@ class Show extends Equatable {
     this.posterUrl,
     this.backdropUrl,
     this.trailer,
+    this.videos = const [],
     this.runtime,
     this.type = ShowType.show,
     this.firstAired,
@@ -42,6 +51,7 @@ class Show extends Equatable {
 
   Show copyWith({
     String? imdbId,
+    String? title,
     String? posterUrl,
     String? backdropUrl,
     String? overview,
@@ -50,12 +60,13 @@ class Show extends Equatable {
     List<String>? genres,
     String? status,
     String? trailer,
+    List<MediaVideo>? videos,
   }) {
     return Show(
       traktId: traktId,
       imdbId: imdbId ?? this.imdbId,
       tmdbId: tmdbId,
-      title: title,
+      title: title ?? this.title,
       year: year,
       overview: overview ?? this.overview,
       rating: rating ?? this.rating,
@@ -66,10 +77,20 @@ class Show extends Equatable {
       posterUrl: posterUrl ?? this.posterUrl,
       backdropUrl: backdropUrl ?? this.backdropUrl,
       trailer: trailer ?? this.trailer,
+      videos: videos ?? this.videos,
       runtime: runtime,
       type: type,
       firstAired: firstAired,
     );
+  }
+
+  /// Los vídeos que la ficha puede ofrecer: los de TMDB y, si no hay ninguno,
+  /// el tráiler que anotó Trakt. Una sola lista para toda la interfaz.
+  List<MediaVideo> get promotionalVideos {
+    if (videos.isNotEmpty) return videos;
+    final raw = trailer?.trim();
+    if (raw == null || raw.isEmpty) return const [];
+    return [MediaVideo.fromTrakt(raw)];
   }
 
   @override
@@ -139,7 +160,8 @@ class Episode extends Equatable {
   });
 
   String get displayTitle => title ?? 'Episode $number';
-  String get code => 'S${season.toString().padLeft(2, '0')}E${number.toString().padLeft(2, '0')}';
+  String get code =>
+      'S${season.toString().padLeft(2, '0')}E${number.toString().padLeft(2, '0')}';
 
   @override
   List<Object?> get props => [season, number, traktId];
@@ -185,7 +207,9 @@ class ResolvedStream extends Equatable {
   /// debrid habilitado que lo resuelva.
   bool get isAvailable {
     if (url.isNotEmpty) return true;
-    return magnetUrl != null && magnetUrl!.isNotEmpty && unavailableReason == null;
+    return magnetUrl != null &&
+        magnetUrl!.isNotEmpty &&
+        unavailableReason == null;
   }
 
   /// True cuando reproduce sin depender de un servicio debrid.

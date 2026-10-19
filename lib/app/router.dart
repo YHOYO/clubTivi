@@ -13,6 +13,7 @@ import '../features/settings/stremio_addons_screen.dart';
 import '../features/shows/shows_screen.dart';
 import '../features/shows/show_detail_screen.dart';
 import '../features/shows/stremio_meta_screen.dart';
+import '../features/shows/trailer_player_screen.dart';
 import '../features/splash/splash_screen.dart';
 import '../platform/tv/tv_shell.dart';
 import '../data/models/show.dart';
@@ -21,14 +22,8 @@ import '../data/models/stremio_addon.dart';
 GoRouter createRouter() {
   // Routes that live inside the TV sidebar shell
   final sidebarRoutes = [
-    GoRoute(
-      path: '/',
-      builder: (context, state) => const ChannelsScreen(),
-    ),
-    GoRoute(
-      path: '/guide',
-      builder: (context, state) => const GuideScreen(),
-    ),
+    GoRoute(path: '/', builder: (context, state) => const ChannelsScreen()),
+    GoRoute(path: '/guide', builder: (context, state) => const GuideScreen()),
     GoRoute(
       path: '/providers',
       builder: (context, state) => const ProvidersScreen(),
@@ -53,10 +48,7 @@ GoRouter createRouter() {
 
   // Routes outside the shell (player, shows detail, splash, etc.)
   final standaloneRoutes = [
-    GoRoute(
-      path: '/splash',
-      builder: (context, state) => const SplashScreen(),
-    ),
+    GoRoute(path: '/splash', builder: (context, state) => const SplashScreen()),
     GoRoute(
       path: '/player',
       builder: (context, state) {
@@ -75,9 +67,18 @@ GoRouter createRouter() {
         );
       },
     ),
+    GoRoute(path: '/shows', builder: (context, state) => const ShowsScreen()),
     GoRoute(
-      path: '/shows',
-      builder: (context, state) => const ShowsScreen(),
+      path: '/trailer',
+      builder: (context, state) {
+        final args = state.extra;
+        if (args is! TrailerRouteArgs) return const _UnavailableScreen();
+        return TrailerPlayerScreen(
+          video: args.video,
+          videos: args.videos,
+          title: args.title,
+        );
+      },
     ),
     GoRoute(
       path: '/shows/:id',
@@ -97,15 +98,7 @@ GoRouter createRouter() {
             addonUrl: extra['addonUrl'] as String? ?? '',
           );
         }
-        return const Scaffold(
-          backgroundColor: Color(0xFF0A0A1A),
-          body: Center(
-            child: Text(
-              'Esta ficha ya no está disponible',
-              style: TextStyle(color: Colors.white70),
-            ),
-          ),
-        );
+        return const _UnavailableScreen();
       },
     ),
   ];
@@ -126,11 +119,27 @@ GoRouter createRouter() {
   // Non-TV: flat routes (original behavior)
   return GoRouter(
     initialLocation: '/splash',
-    routes: [
-      ...sidebarRoutes,
-      ...standaloneRoutes,
-    ],
+    routes: [...sidebarRoutes, ...standaloneRoutes],
   );
+}
+
+/// Lo que se enseña cuando la ruta recibe datos que ya no valen (una ficha
+/// recargada, un vídeo que se quedó sin identificador).
+class _UnavailableScreen extends StatelessWidget {
+  const _UnavailableScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: Color(0xFF0A0A1A),
+      body: Center(
+        child: Text(
+          'Este contenido ya no está disponible',
+          style: TextStyle(color: Colors.white70),
+        ),
+      ),
+    );
+  }
 }
 
 /// Global router instance — initialized lazily.

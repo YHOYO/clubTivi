@@ -1,18 +1,22 @@
 import 'package:dio/dio.dart';
 
+import '../../models/media_video.dart';
+
 /// Client for The Movie Database (TMDB) API v3
 /// Docs: https://developer.themoviedb.org/docs
 class TmdbClient {
   final Dio _dio;
   final String apiKey;
 
+  /// Idioma de los metadatos (`es-ES`, `en-US`…). TMDB devuelve títulos,
+  /// sinopsis, nombres de episodios y tráilers en ese idioma.
+  final String language;
+
   static const _baseUrl = 'https://api.themoviedb.org/3';
   static const _imageBase = 'https://image.tmdb.org/t/p';
 
-  TmdbClient({
-    required this.apiKey,
-    Dio? dio,
-  }) : _dio = dio ?? Dio() {
+  TmdbClient({required this.apiKey, this.language = 'es-ES', Dio? dio})
+    : _dio = dio ?? Dio() {
     // Detect if user provided a v4 Bearer token (long JWT) vs v3 API key (short hex)
     final isBearerToken = apiKey.length > 40 || apiKey.startsWith('eyJ');
 
@@ -20,16 +24,20 @@ class TmdbClient {
       ..baseUrl = _baseUrl
       ..connectTimeout = const Duration(seconds: 10)
       ..receiveTimeout = const Duration(seconds: 15);
-    _dio.interceptors.add(InterceptorsWrapper(
-      onRequest: (options, handler) {
-        if (isBearerToken) {
-          options.headers['Authorization'] = 'Bearer $apiKey';
-        } else {
-          options.queryParameters['api_key'] = apiKey;
-        }
-        handler.next(options);
-      },
-    ));
+    _dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          if (isBearerToken) {
+            options.headers['Authorization'] = 'Bearer $apiKey';
+          } else {
+            options.queryParameters['api_key'] = apiKey;
+          }
+          // Todas las llamadas comparten el idioma elegido en Shows & Movies.
+          options.queryParameters.putIfAbsent('language', () => language);
+          handler.next(options);
+        },
+      ),
+    );
   }
 
   /// Build a full image URL from a TMDB file path
@@ -49,16 +57,26 @@ class TmdbClient {
 
   /// Get TV show details including images and external IDs
   Future<TmdbShowDetail> getTvShow(int tmdbId) async {
-    final response = await _dio.get('/tv/$tmdbId',
-        queryParameters: {'append_to_response': 'external_ids'});
-    return TmdbShowDetail.fromJson(response.data as Map<String, dynamic>);
+    final response = await _dio.get(
+      '/tv/$tmdbId',
+      queryParameters: {'append_to_response': 'external_ids,videos'},
+    );
+    return TmdbShowDetail.fromJson(
+      response.data as Map<String, dynamic>,
+      preferredLanguage: language,
+    );
   }
 
-  /// Get movie details including images and external IDs
+  /// Get movie details including images, external IDs and trailers
   Future<TmdbShowDetail> getMovie(int tmdbId) async {
-    final response = await _dio.get('/movie/$tmdbId',
-        queryParameters: {'append_to_response': 'external_ids'});
-    return TmdbShowDetail.fromJson(response.data as Map<String, dynamic>);
+    final response = await _dio.get(
+      '/movie/$tmdbId',
+      queryParameters: {'append_to_response': 'external_ids,videos'},
+    );
+    return TmdbShowDetail.fromJson(
+      response.data as Map<String, dynamic>,
+      preferredLanguage: language,
+    );
   }
 
   /// Get TV season details with episode list
@@ -92,7 +110,10 @@ class TmdbClient {
   }
 
   /// Get trending TV shows (day or week)
-  Future<List<TmdbSearchResult>> getTrendingTv({String window = 'day', int page = 1}) async {
+  Future<List<TmdbSearchResult>> getTrendingTv({
+    String window = 'day',
+    int page = 1,
+  }) async {
     final response = await _dio.get(
       '/trending/tv/$window',
       queryParameters: {'page': page},
@@ -104,7 +125,10 @@ class TmdbClient {
   }
 
   /// Get trending movies (day or week)
-  Future<List<TmdbSearchResult>> getTrendingMovie({String window = 'day', int page = 1}) async {
+  Future<List<TmdbSearchResult>> getTrendingMovie({
+    String window = 'day',
+    int page = 1,
+  }) async {
     final response = await _dio.get(
       '/trending/movie/$window',
       queryParameters: {'page': page},
@@ -140,7 +164,10 @@ class TmdbClient {
   }
 
   /// Find by external ID (e.g., IMDB ID)
-  Future<TmdbShowDetail?> findByImdbId(String imdbId, {bool isMovie = false}) async {
+  Future<TmdbShowDetail?> findByImdbId(
+    String imdbId, {
+    bool isMovie = false,
+  }) async {
     final response = await _dio.get(
       '/find/$imdbId',
       queryParameters: {'external_source': 'imdb_id'},
@@ -167,6 +194,10 @@ class TmdbShowDetail {
   final int? numberOfEpisodes;
   final int? year;
 
+  /// Todos los vídeos que publica TMDB para el título, ya ordenados (el
+  /// tráiler oficial primero). Vacío cuando no hay ninguno.
+  final List<MediaVideo> videos;
+
   const TmdbShowDetail({
     required this.id,
     this.title = '',
@@ -180,16 +211,27 @@ class TmdbShowDetail {
     this.numberOfSeasons,
     this.numberOfEpisodes,
     this.year,
+    this.videos = const [],
   });
 
   String get posterUrl => TmdbClient.posterUrl(posterPath);
   String get backdropUrl => TmdbClient.backdropUrl(backdropPath);
 
-  factory TmdbShowDetail.fromJson(Map<String, dynamic> json) {
-    final releaseDate = json['release_date'] as String? ?? json['first_air_date'] as String? ?? '';
+  /// El primer vídeo de la lista ordenada — normalmente el tráiler oficial.
+  MediaVideo? get primaryTrailer => videos.isEmpty ? null : videos.first;
+
+  factory TmdbShowDetail.fromJson(
+    Map<String, dynamic> json, {
+    String? preferredLanguage,
+  }) {
+    final releaseDate =
+        json['release_date'] as String? ??
+        json['first_air_date'] as String? ??
+        '';
     // IMDB ID: movies have it at top level, TV shows have it in external_ids
     final externalIds = json['external_ids'] as Map<String, dynamic>?;
-    final imdbId = json['imdb_id'] as String? ?? externalIds?['imdb_id'] as String?;
+    final imdbId =
+        json['imdb_id'] as String? ?? externalIds?['imdb_id'] as String?;
     return TmdbShowDetail(
       id: json['id'] as int,
       title: json['title'] as String? ?? json['name'] as String? ?? '',
@@ -199,13 +241,20 @@ class TmdbShowDetail {
       overview: json['overview'] as String?,
       voteAverage: (json['vote_average'] as num?)?.toDouble(),
       voteCount: json['vote_count'] as int?,
-      genres: (json['genres'] as List?)
+      genres:
+          (json['genres'] as List?)
               ?.map((g) => (g as Map<String, dynamic>)['name'] as String)
               .toList() ??
           [],
       numberOfSeasons: json['number_of_seasons'] as int?,
       numberOfEpisodes: json['number_of_episodes'] as int?,
-      year: releaseDate.length >= 4 ? int.tryParse(releaseDate.substring(0, 4)) : null,
+      year: releaseDate.length >= 4
+          ? int.tryParse(releaseDate.substring(0, 4))
+          : null,
+      videos: MediaVideo.listFromTmdb(
+        json['videos'] as Map<String, dynamic>?,
+        preferredLanguage: preferredLanguage,
+      ),
     );
   }
 }
@@ -229,7 +278,8 @@ class TmdbSeasonDetail {
       seasonNumber: json['season_number'] as int,
       posterPath: json['poster_path'] as String?,
       overview: json['overview'] as String?,
-      episodes: (json['episodes'] as List?)
+      episodes:
+          (json['episodes'] as List?)
               ?.map((e) => TmdbEpisode.fromJson(e as Map<String, dynamic>))
               .toList() ??
           [],
