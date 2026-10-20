@@ -1,0 +1,58 @@
+{
+  "streams": [
+    {
+      "name": "[TORRENT🧲] Comet 2160p",
+      "description": "📄 MobLand.S01E01.Stick.or.Twist.MULTi.2160p.PMTP.WEB-DL.DDP5.1.DoVi.HDR10.HEVC-Ralf.mkv\n📹 hevc • DV • HDR • 10bit | 🔊 Dolby Digital Plus • 5.1\n⭐ WEB-DL | 🏷️ Ralf\n💾 6.2 GB 🔎 StremThru\n🌎",
+      "behaviorHints": {
+        "bingeGroup": "comet|torrent|82bb454cfdf6544d36934a548de06c4fc9b0a7b8",
+        "filename": "MobLand.S01E01.Stick.or.Twist.MULTi.2160p.PMTP.WEB-DL.DDP5.1.DoVi.HDR10.HEVC-Ralf.mkv",
+        "videoSize": 6668428275
+      },
+      "infoHash": "82bb454cfdf6544d36934a548de06c4fc9b0a7b8",
+      "fileIdx": 1
+    },
+    {
+      "name": "[TORRENT🧲] Comet unknown",
+      "description": "📄 MobLand.S01E01.HDTV.Subtitulado.Esp.SC.mp4\n⭐ HDTV\n💾 611.0 MB 🔎 StremThru\n🇪🇸",
+      "behaviorHints": {
+        "bingeGroup": "comet|torrent|a10edb2f8b98fc1924923550bfa69df9d67a7c01",
+        "filename": "MobLand.S01E01.HDTV.Subtitulado.Esp.SC.mp4",
+        "videoSize": 640671176
+      },
+      "infoHash": "a10edb2f8b98fc1924923550bfa69df9d67a7c01",
+      "fileIdx": 0
+    },
+    {
+      "name": "[TORRENT🧲] Comet 2160p",
+      "description": "📄 MobLand (2025) S01E01 (2160p AMZN WEB-DL Hybrid H265 DV HDR10+ DDP 5.1 English - HONE).mkv\n📹 hevc • DV • HDR10+ • 10bit | 🔊 Dolby Digital Plus • 5.1\n⭐ WEB-DL\n💾 6.1 GB 🔎 StremThru\n🇬🇧",
+      "behaviorHints": {
+        "bingeGroup": "comet|torrent|675b404e74afa486ec88d0cbae6aea3e55e3dc59",
+        "filename": "MobLand (2025) S01E01 (2160p AMZN WEB-DL Hybrid H265 DV HDR10+ DDP 5.1 English - HONE).mkv",
+        "videoSize": 6497401574
+      },
+      "infoHash": "675b404e74afa486ec88d0cbae6aea3e55e3dc59",
+      "fileIdx": 2
+    },
+    {
+      "name": "[TORRENT🧲] Comet 2160p",
+      "description": "📄 MobLand (2025) - S01E01 - Stick or Twist [WEBDL-2160p][DV HDR10Plus][EAC35.1][EN+FR][h265]-FRESH.mkv\n📹 hevc • DV • HDR10+ | 🔊 Dolby Digital Plus • 5.1\n⭐ WEB-DL | 🏷️ FRESH\n💾 10.9 GB 🔎 StremThru\n🌎/🇬🇧/🇫🇷",
+      "behaviorHints": {
+        "bingeGroup": "comet|torrent|7857edfece198a44a5e0024611b8d86fc1a9c0f3",
+        "filename": "MobLand (2025) - S01E01 - Stick or Twist [WEBDL-2160p][DV HDR10Plus][EAC35.1][EN+FR][h265]-FRESH.mkv",
+        "videoSize": 11653988374
+      },
+      "infoHash": "7857edfece198a44a5e0024611b8d86fc1a9c0f3",
+      "fileIdx": 0
+    },
+    {
+      "name": "[TORRENT🧲] Comet 1080p",
+      "description": "📄 MobLand S01E01 Stick or Twist 1080p AMZN WEB-DL DUAL DDP5.1 H264 TSRG.mkv\n📹 avc | 🔊 Dolby Digital Plus • 5.1\n⭐ WEB-DL\n💾 4.1 GB 🔎 StremThru\n🌎",
+      "behaviorHints": {
+        "bingeGroup": "comet|torrent|f5f315664bab17635648e4da7275fde0044e865a",
+        "filename": "MobLand S01E01 Stick or Twist 1080p AMZN WEB-DL DUAL DDP5.1 H264 TSRG.mkv",
+        "videoSize": 4446697381
+      },
+      "infoHash": "f5f315664bab17635648e4da7275fde0044e865a"
+    }
+  ]
+}

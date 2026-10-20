@@ -59,6 +59,9 @@ GoRouter createRouter() {
           channelLogo: extra['channelLogo'] as String?,
           alternativeUrls:
               (extra['alternativeUrls'] as List<String>?) ?? const [],
+          httpHeaders: Map<String, String>.from(
+            extra['httpHeaders'] as Map? ?? const <String, String>{},
+          ),
           channels:
               (extra['channels'] as List<dynamic>?)
                   ?.cast<Map<String, dynamic>>() ??

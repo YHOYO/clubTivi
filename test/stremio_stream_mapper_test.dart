@@ -21,32 +21,56 @@ List<Map<String, dynamic>> _streamsOf(String fixture) {
   ];
 }
 
-StreamSource? _map(String fixture, int index) {
+StreamSource? _map(String fixture, int index, {String? providerName}) {
   final streams = _streamsOf(fixture);
   return stremioStreamToSource(
     streams[index],
     providerId: _providerId,
-    providerName: _providerName,
+    providerName: providerName ?? _providerName,
     index: index,
   );
 }
 
 void main() {
-  test('un torrent real de Torrentio conserva hash, fileIdx, seeds y tamaño',
-      () {
-    final source = _map('torrentio_streams.json', 0)!;
+  test(
+    'un torrent real de Torrentio conserva hash, fileIdx, seeds y tamaño',
+    () {
+      final source = _map('torrentio_streams.json', 0)!;
+
+      expect(source.kind, SourceKind.torrent);
+      expect(source.providerId, _providerId);
+      expect(source.providerName, _providerName);
+      expect(source.infoHash, 'f181e166e440b355ce73cc8b988f47ad7e8ea6ab');
+      expect(source.fileIdx, 0);
+      expect(source.quality, '4K', reason: 'el nombre del addon dice "4k"');
+      expect(source.seeds, 1);
+      expect(source.sizeBytes, closeTo(7.1 * 1024 * 1024 * 1024, 1));
+      expect(source.title, contains('Big Buck Bunny'));
+      expect(source.locator, StreamLocator.magnet);
+      expect(
+        source.magnetUrl,
+        contains('f181e166e440b355ce73cc8b988f47ad7e8ea6ab'),
+      );
+    },
+  );
+
+  test('una url magnet se trata como torrent, no como enlace directo', () {
+    final source = stremioStreamToSource(
+      {
+        'name': 'Torrentio',
+        'title': 'Movie.2024.1080p.WEB-DL',
+        'url': 'magnet:?xt=urn:btih:ABCDEF0123456789ABCDEF0123456789ABCDEF01',
+      },
+      providerId: 'torrentio',
+      providerName: 'Torrentio',
+      index: 0,
+    )!;
 
     expect(source.kind, SourceKind.torrent);
-    expect(source.providerId, _providerId);
-    expect(source.providerName, _providerName);
-    expect(source.infoHash, 'f181e166e440b355ce73cc8b988f47ad7e8ea6ab');
-    expect(source.fileIdx, 0);
-    expect(source.quality, '4K', reason: 'el nombre del addon dice "4k"');
-    expect(source.seeds, 1);
-    expect(source.sizeBytes, closeTo(7.1 * 1024 * 1024 * 1024, 1));
-    expect(source.title, contains('Big Buck Bunny'));
     expect(source.locator, StreamLocator.magnet);
-    expect(source.magnetUrl, contains('f181e166e440b355ce73cc8b988f47ad7e8ea6ab'));
+    expect(source.isDirect, isFalse);
+    expect(source.infoHash, 'ABCDEF0123456789ABCDEF0123456789ABCDEF01');
+    expect(source.magnetUrl, startsWith('magnet:?xt=urn:btih:ABCDEF'));
   });
 
   test('los sources del addon se traducen a trackers y el dht se ignora', () {
@@ -69,16 +93,21 @@ void main() {
     expect((raw['sources'] as List).length, trackers.length + dht);
     expect(source.fileIdx, 3);
     expect(source.quality, '1080p');
-    expect(source.audioLanguages, containsAll(<String>['en', 'ru']),
-        reason: 'los idiomas del payload real vienen como banderas');
+    expect(
+      source.audioLanguages,
+      containsAll(<String>['en', 'ru']),
+      reason: 'los idiomas del payload real vienen como banderas',
+    );
   });
 
   test('un infoHash sin sources genera un magnet válido', () {
     final source = _map('helloworld_streams.json', 0)!;
 
-    expect(source.magnetUrl,
-        'magnet:?xt=urn:btih:24c8802e2624e17d46cd555f364debd949f2c81e'
-        '&dn=The%20Wizard%20of%20Oz');
+    expect(
+      source.magnetUrl,
+      'magnet:?xt=urn:btih:24c8802e2624e17d46cd555f364debd949f2c81e'
+      '&dn=The%20Wizard%20of%20Oz',
+    );
     expect(source.fileIdx, 0);
     expect(source.seeds, isNull, reason: 'el payload no publica seeds');
     expect(source.sizeBytes, isNull);
@@ -96,18 +125,20 @@ void main() {
     expect(source.quality, '1080p', reason: 'el title del addon lo declara');
   });
 
-  test('un stream con url directa y sin cabeceras es reproducible sin proxy',
-      () {
-    final source = _map('helloworld_streams.json', 2)!;
+  test(
+    'un stream con url directa y sin cabeceras es reproducible sin proxy',
+    () {
+      final source = _map('helloworld_streams.json', 2)!;
 
-    expect(source.kind, SourceKind.addon);
-    expect(source.isDirect, isTrue);
-    expect(source.url, 'http://clips.vorwaerts-gmbh.de/big_buck_bunny.mp4');
-    expect(source.needsProxy, isFalse);
-    expect(source.headers, isEmpty);
-    expect(source.referer, isNull);
-    expect(source.isAvailable, isTrue);
-  });
+      expect(source.kind, SourceKind.addon);
+      expect(source.isDirect, isTrue);
+      expect(source.url, 'http://clips.vorwaerts-gmbh.de/big_buck_bunny.mp4');
+      expect(source.needsProxy, isFalse);
+      expect(source.headers, isEmpty);
+      expect(source.referer, isNull);
+      expect(source.isAvailable, isTrue);
+    },
+  );
 
   test('behaviorHints.proxyHeaders y notWebReady llegan intactos al tipo', () {
     final source = _map('direct_url_proxy_headers.json', 0)!;
@@ -134,6 +165,81 @@ void main() {
     expect(source.quality, '4K');
     expect(source.sizeBytes, closeTo(14.3 * 1024 * 1024 * 1024, 1));
     expect(source.subtitles, isEmpty);
+  });
+
+  test('Comet: description aporta idioma, tamaño y detalle técnico', () {
+    final source = _map('comet_mobland_s01e01.json', 0, providerName: 'Comet')!;
+
+    expect(source.providerName, 'Comet');
+    expect(source.displayName, contains('MobLand.S01E01'));
+    expect(source.quality, '4K');
+    expect(source.qualityDetail, contains('HEVC'));
+    expect(source.qualityDetail, contains('DV'));
+    expect(source.sizeBytes, 6668428275, reason: 'behaviorHints.videoSize');
+    expect(source.audioMode, 'MULTI');
+    expect(
+      source.audioLanguages,
+      isNot(contains(kLanguageSpanish)),
+      reason: 'MULTi no dice que una pista sea español',
+    );
+  });
+
+  test(
+    'Comet: la fila Subtitulado.Esp es español sin fingir audio español',
+    () {
+      final source = _map(
+        'comet_mobland_s01e01.json',
+        1,
+        providerName: 'Comet',
+      )!;
+
+      expect(source.displayName, contains('HDTV.Subtitulado.Esp'));
+      expect(source.quality, isNull);
+      expect(source.qualityDetail, 'HDTV');
+      expect(source.sizeBytes, 640671176, reason: 'behaviorHints.videoSize');
+      expect(source.audioLanguages, isEmpty);
+      expect(source.subtitleLanguages, {kLanguageSpanish});
+      expect(source.hasSubtitles, isTrue);
+    },
+  );
+
+  test('anime real: 🇯🇵🇪🇸 es audio japonés con subtítulos españoles', () {
+    final source = _map(
+      'animes_jujutsu_spanish_streams.json',
+      0,
+      providerName: 'AnimES',
+    )!;
+
+    expect(source.providerName, 'AnimES');
+    expect(source.displayName, 'Jujutsu Kaisen Ep. 1');
+    expect(source.audioLanguages, {'ja'});
+    expect(source.subtitleLanguages, {kLanguageSpanish});
+    expect(source.hasSubtitles, isTrue);
+    expect(
+      source.needsProxy,
+      isTrue,
+      reason: 'el addon manda Referer y User-Agent',
+    );
+  });
+
+  test('anime real con DUB: la bandera mexicana sí es audio latino', () {
+    final source = _map(
+      'animes_jujutsu_spanish_streams.json',
+      1,
+      providerName: 'AnimES',
+    )!;
+
+    expect(source.displayName, 'Jujutsu Kaisen Ep. 1');
+    expect(source.audioLanguages, {kLanguageSpanishLatin});
+    expect(source.subtitleLanguages, isEmpty);
+    expect(source.hasSubtitles, isFalse);
+  });
+
+  test('Wolfmax4k es un tracker, no una resolución 4K', () {
+    final source = _map('torrentio_mobland_s01e01.json', 50)!;
+
+    expect(source.quality, '720p');
+    expect(source.qualityDetail, contains('HDTV'));
   });
 
   test('ytId y externalUrl se descartan: no son reproducibles', () {

@@ -35,7 +35,11 @@ StreamSource _source({
 void main() {
   test('la localización prioriza URL, luego magnet y luego infoHash', () {
     expect(
-      _source(url: 'https://x', magnetUrl: 'magnet:?x', infoHash: 'abc').locator,
+      _source(
+        url: 'https://x',
+        magnetUrl: 'magnet:?x',
+        infoHash: 'abc',
+      ).locator,
       StreamLocator.url,
     );
     expect(
@@ -49,8 +53,10 @@ void main() {
   test('disponibilidad: URL directa siempre; magnet solo sin motivo', () {
     expect(_source(url: 'https://x').isAvailable, isTrue);
     expect(
-      _source(magnetUrl: 'magnet:?x', unavailableReason: kDebridRequiredReason)
-          .isAvailable,
+      _source(
+        magnetUrl: 'magnet:?x',
+        unavailableReason: kDebridRequiredReason,
+      ).isAvailable,
       isFalse,
     );
     expect(_source(magnetUrl: 'magnet:?x').isAvailable, isTrue);
@@ -59,9 +65,29 @@ void main() {
   });
 
   test('formatea el tamaño legible', () {
-    expect(_source(sizeBytes: 4 * 1024 * 1024 * 1024).filesizeDisplay, '4.0 GB');
+    expect(
+      _source(sizeBytes: 4 * 1024 * 1024 * 1024).filesizeDisplay,
+      '4.0 GB',
+    );
     expect(_source(sizeBytes: 700 * 1024 * 1024).filesizeDisplay, '700 MB');
     expect(_source().filesizeDisplay, '');
+    expect(
+      _source(sizeBytes: 0).filesizeDisplay,
+      '',
+      reason: 'un tamaño desconocido no se pinta como -0 MB',
+    );
+  });
+
+  test('displayName corta la lista de seeds/tamaño del título del addon', () {
+    const source = StreamSource(
+      id: 'id',
+      providerId: 'torrentio',
+      providerName: 'Torrentio',
+      kind: SourceKind.torrent,
+      title: 'MobLand.S01E01.mkv\n👤 26 💾 1.37 GB ⚙️ EXT\n🇪🇸',
+    );
+
+    expect(source.displayName, 'MobLand.S01E01.mkv');
   });
 
   test('copyWith enriquece con debrid sin perder idiomas ni proxy', () {
@@ -78,17 +104,25 @@ void main() {
     final enriched = original.copyWith(
       kind: SourceKind.debrid,
       isCached: true,
-      providerName: 'real-debrid ⚡',
+      cachedBy: 'real-debrid',
     );
 
     expect(enriched.kind, SourceKind.debrid);
     expect(enriched.isCached, isTrue);
-    expect(enriched.providerName, 'real-debrid ⚡');
+    expect(enriched.cachedBy, 'real-debrid');
+    expect(
+      enriched.providerName,
+      'provider',
+      reason: 'cachear no cambia el addon de origen',
+    );
     expect(enriched.audioLanguages, original.audioLanguages);
     expect(enriched.sizeBytes, original.sizeBytes);
     expect(enriched.referer, 'https://site');
     expect(enriched.headers, {'User-Agent': 'ua'});
     expect(enriched.needsProxy, isTrue);
     expect(enriched.magnetUrl, original.magnetUrl);
+    expect(enriched.audioMode, original.audioMode);
+    expect(enriched.qualityDetail, original.qualityDetail);
+    expect(enriched.hasSubtitles, original.hasSubtitles);
   });
 }

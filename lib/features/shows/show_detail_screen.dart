@@ -12,6 +12,7 @@ import '../../data/models/stream_search_result.dart';
 import '../../data/models/stream_source.dart';
 import '../../data/services/debrid_settings.dart';
 import '../player/player_service.dart';
+import 'await_provider.dart';
 import 'shows_providers.dart';
 import 'stream_picker.dart';
 import 'trailer_player_screen.dart';
@@ -502,8 +503,9 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     // canal antes de resolver, no cuando el reproductor ya está encima.
     await ref.read(playerServiceProvider).stop();
     try {
-      final result = await ref.read(
-        resolveStreamProvider(StreamResolveParams(show.imdbId!)).future,
+      final result = await awaitProviderFuture(
+        ref,
+        resolveStreamProvider(StreamResolveParams(show.imdbId!)),
       );
       if (result.isEmpty) {
         _showSnackbar(_noStreamsMessage(result));
@@ -528,14 +530,15 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     // episodio, aunque la fuente tarde en resolverse.
     await ref.read(playerServiceProvider).stop();
     try {
-      final result = await ref.read(
+      final result = await awaitProviderFuture(
+        ref,
         resolveStreamProvider(
           StreamResolveParams(
             show.imdbId!,
             season: episode.season,
             episode: episode.number,
           ),
-        ).future,
+        ),
       );
       if (result.isEmpty) {
         _showSnackbar(_noStreamsMessage(result, 'for ${episode.code}'));
@@ -600,7 +603,13 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
         return;
       }
       if (!mounted) return;
-      _launchPlayer(url, title);
+      // Un enlace resuelto por debrid ya no pertenece al CDN del addon, así que
+      // sus cabeceras sólo viajan con la URL directa.
+      _launchPlayer(
+        url,
+        title,
+        headers: stream.isDirect ? stream.headers : const {},
+      );
     } on SourceUnavailableException catch (e) {
       _showSnackbar(e.message);
     } on DebridUnavailableException catch (e) {
@@ -663,7 +672,11 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     }
   }
 
-  void _launchPlayer(String url, String title) {
+  void _launchPlayer(
+    String url,
+    String title, {
+    Map<String, String> headers = const {},
+  }) {
     debugPrint('[Shows] Launching player: url=$url, title=$title');
     if (url.isEmpty) {
       _showSnackbar('Stream URL is empty — try another source');
@@ -675,6 +688,7 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
         'streamUrl': url,
         'channelName': title,
         'channelLogo': widget.initialShow?.posterUrl ?? '',
+        if (headers.isNotEmpty) 'httpHeaders': headers,
       },
     );
   }

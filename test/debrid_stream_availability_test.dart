@@ -29,8 +29,7 @@ class _FakeTorrentSearch extends TorrentSearchClient {
     String imdbId, {
     required int season,
     required int episode,
-  }) async =>
-      results;
+  }) async => results;
 }
 
 class _FakeDebrid implements DebridService {
@@ -122,19 +121,21 @@ void main() {
   Future<List<StreamSource>> sourcesOf(ShowsRepository repo) async =>
       (await repo.resolveStreams(imdbId: 'tt1234567')).sources;
 
-  test('sin debrid los torrents se listan como no disponibles con motivo',
-      () async {
-    final streams = await sourcesOf(repository());
+  test(
+    'sin debrid los torrents se listan como no disponibles con motivo',
+    () async {
+      final streams = await sourcesOf(repository());
 
-    expect(streams, hasLength(1));
-    final source = streams.single;
-    expect(source.isAvailable, isFalse);
-    expect(source.unavailableReason, kDebridRequiredReason);
-    expect(source.locator, StreamLocator.magnet);
-    expect(source.providerName, 'torrent');
-    expect(source.kind, SourceKind.torrent);
-    expect(source.audioLanguages, {kLanguageSpanishLatin});
-  });
+      expect(streams, hasLength(1));
+      final source = streams.single;
+      expect(source.isAvailable, isFalse);
+      expect(source.unavailableReason, kDebridRequiredReason);
+      expect(source.locator, StreamLocator.magnet);
+      expect(source.providerName, 'torrent');
+      expect(source.kind, SourceKind.torrent);
+      expect(source.audioLanguages, {kLanguageSpanishLatin});
+    },
+  );
 
   test('con debrid habilitado los torrents quedan disponibles', () async {
     final streams = await sourcesOf(repository(debrid: [_FakeDebrid()]));
@@ -143,26 +144,44 @@ void main() {
     expect(streams.single.unavailableReason, isNull);
   });
 
-  test('marca como cacheados los hashes del servicio en orden de prioridad',
-      () async {
-    final streams = await sourcesOf(repository(debrid: [
-      _FakeDebrid(name: 'Second', cached: {_infoHash.toLowerCase()}),
-    ]));
+  test(
+    'marca como cacheados los hashes del servicio en orden de prioridad',
+    () async {
+      final streams = await sourcesOf(
+        repository(
+          debrid: [
+            _FakeDebrid(name: 'Second', cached: {_infoHash.toLowerCase()}),
+          ],
+        ),
+      );
 
-    final source = streams.single;
-    expect(source.isCached, isTrue);
-    expect(source.kind, SourceKind.debrid);
-    expect(source.providerName, contains('Second'));
-    expect(source.isAvailable, isTrue);
-    expect(source.sizeBytes, 4 * 1024 * 1024 * 1024,
-        reason: 'enriquecer con debrid no pierde los metadatos');
-  });
+      final source = streams.single;
+      expect(source.isCached, isTrue);
+      expect(source.kind, SourceKind.debrid);
+      expect(
+        source.providerName,
+        'torrent',
+        reason: 'el debrid no oculta de qué addon viene la fuente',
+      );
+      expect(source.cachedBy, 'Second');
+      expect(source.isAvailable, isTrue);
+      expect(
+        source.sizeBytes,
+        4 * 1024 * 1024 * 1024,
+        reason: 'enriquecer con debrid no pierde los metadatos',
+      );
+    },
+  );
 
   test('si el primer servicio falla al consultar, sigue disponible', () async {
-    final streams = await sourcesOf(repository(debrid: [
-      _FakeDebrid(name: 'Broken', failAvailability: true),
-      _FakeDebrid(name: 'Healthy'),
-    ]));
+    final streams = await sourcesOf(
+      repository(
+        debrid: [
+          _FakeDebrid(name: 'Broken', failAvailability: true),
+          _FakeDebrid(name: 'Healthy'),
+        ],
+      ),
+    );
 
     expect(streams.single.isAvailable, isTrue);
   });
@@ -192,51 +211,58 @@ void main() {
     );
   });
 
-  test('la resolución prueba los servicios en orden y cae al siguiente',
-      () async {
-    final repo = repository(debrid: [
-      _FakeDebrid(name: 'Broken', failResolve: true),
-      _FakeDebrid(name: 'Working'),
-    ]);
-
-    final resolved = await repo.resolveMagnet(_torrentSource.magnetUrl!);
-
-    expect(resolved, isNotNull);
-    expect(resolved!.source, 'Working');
-    expect(repo.debridServiceNames, ['Broken', 'Working']);
-  });
-
-  test('el repositorio usa el estado habilitado y el orden, no el enum',
-      () async {
-    SharedPreferences.setMockInitialValues({
-      debridConfigsKey: jsonEncode({
-        'version': 2,
-        'services': [
-          {'type': 'allDebrid', 'token': 'ad', 'enabled': true},
-          {'type': 'realDebrid', 'token': 'rd', 'enabled': true},
+  test(
+    'la resolución prueba los servicios en orden y cae al siguiente',
+    () async {
+      final repo = repository(
+        debrid: [
+          _FakeDebrid(name: 'Broken', failResolve: true),
+          _FakeDebrid(name: 'Working'),
         ],
-      }),
-    });
-    final notifier = DebridSettingsNotifier();
-    await notifier.load();
-    final container = ProviderContainer(
-      overrides: [debridSettingsProvider.overrideWith((ref) => notifier)],
-    );
-    addTearDown(container.dispose);
-    // En la app un widget mantiene vivo el provider; aquí hace falta el
-    // listener para que el FutureProvider llegue a resolverse.
-    container.listen(showsRepositoryProvider, (_, _) {});
+      );
 
-    var repo = await container.read(showsRepositoryProvider.future);
-    expect(repo.debridServiceNames, ['AllDebrid', 'Real-Debrid']);
+      final resolved = await repo.resolveMagnet(_torrentSource.magnetUrl!);
 
-    await notifier.setEnabled(DebridType.allDebrid, false);
-    repo = await container.read(showsRepositoryProvider.future);
-    expect(repo.debridServiceNames, ['Real-Debrid'],
-        reason: 'un servicio deshabilitado no resuelve');
+      expect(resolved, isNotNull);
+      expect(resolved!.source, 'Working');
+      expect(repo.debridServiceNames, ['Broken', 'Working']);
+    },
+  );
 
-    await notifier.setEnabled(DebridType.realDebrid, false);
-    repo = await container.read(showsRepositoryProvider.future);
-    expect(repo.hasDebrid, isFalse, reason: 'modo sin debrid');
-  });
+  test(
+    'el repositorio usa el estado habilitado y el orden, no el enum',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        debridConfigsKey: jsonEncode({
+          'version': 2,
+          'services': [
+            {'type': 'allDebrid', 'token': 'ad', 'enabled': true},
+            {'type': 'realDebrid', 'token': 'rd', 'enabled': true},
+          ],
+        }),
+      });
+      final notifier = DebridSettingsNotifier();
+      await notifier.load();
+      final container = ProviderContainer(
+        overrides: [debridSettingsProvider.overrideWith((ref) => notifier)],
+      );
+      addTearDown(container.dispose);
+      // En la app un widget mantiene vivo el provider; aquí hace falta el
+      // listener para que el FutureProvider llegue a resolverse.
+      container.listen(showsRepositoryProvider, (_, _) {});
+
+      var repo = await container.read(showsRepositoryProvider.future);
+      expect(repo.debridServiceNames, ['AllDebrid', 'Real-Debrid']);
+
+      await notifier.setEnabled(DebridType.allDebrid, false);
+      repo = await container.read(showsRepositoryProvider.future);
+      expect(repo.debridServiceNames, [
+        'Real-Debrid',
+      ], reason: 'un servicio deshabilitado no resuelve');
+
+      await notifier.setEnabled(DebridType.realDebrid, false);
+      repo = await container.read(showsRepositoryProvider.future);
+      expect(repo.hasDebrid, isFalse, reason: 'modo sin debrid');
+    },
+  );
 }

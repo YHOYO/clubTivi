@@ -1,6 +1,6 @@
 // El provider de fuentes es el punto de composición: repositorio + ranking con
 // el orden persistido. Este test fija que las preferencias guardadas mandan y
-// que la pantalla sigue recibiendo como máximo 10 fuentes.
+// que el selector recibe todas las fuentes para poder filtrar por español.
 import 'dart:convert';
 
 import 'package:clubtivi/data/datasources/remote/torrent_search_client.dart';
@@ -77,7 +77,7 @@ void main() {
     expect(result.failures, isEmpty, reason: 'sin addons no hay fallos');
   });
 
-  test('la pantalla recibe como máximo 10 fuentes', () async {
+  test('la pantalla recibe todas las fuentes, sin recorte a 10', () async {
     final preferences = LanguagePreferencesNotifier();
     await preferences.load();
 
@@ -100,7 +100,8 @@ void main() {
     container.listen(resolveStreamProvider(params), (_, _) {});
     final result = await container.read(resolveStreamProvider(params).future);
 
-    expect(result.sources, hasLength(10));
+    expect(result.sources, hasLength(13));
     expect(result.sources.first.id, 's12', reason: 'más seeds primero');
+    expect(result.sources.last.id, 's0', reason: 'la peor sigue disponible');
   });
 }

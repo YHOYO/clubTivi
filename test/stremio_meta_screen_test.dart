@@ -73,6 +73,7 @@ Future<void> _pump(
   StreamSearchResult? streams,
   Future<StreamSearchResult>? pendingStreams,
   PlayerService? player,
+  void Function(Map<String, dynamic>? extra)? onPlayerExtra,
 }) async {
   tester.view.physicalSize = const Size(1200, 900);
   tester.view.devicePixelRatio = 1.0;
@@ -90,7 +91,10 @@ Future<void> _pump(
       ),
       GoRoute(
         path: '/player',
-        builder: (context, state) => const Scaffold(body: Text('PLAYER')),
+        builder: (context, state) {
+          onPlayerExtra?.call(state.extra as Map<String, dynamic>?);
+          return const Scaffold(body: Text('PLAYER'));
+        },
       ),
       GoRoute(
         path: '/debrid-services',
@@ -180,6 +184,33 @@ void main() {
 
     pending.complete(const StreamSearchResult(sources: [_source]));
     await tester.pumpAndSettle();
+  });
+
+  testWidgets('las cabeceras del addon viajan al reproductor', (tester) async {
+    Map<String, dynamic>? extra;
+    const protectedSource = StreamSource(
+      id: 'anime:url:0',
+      providerId: 'com.animeflv.stremio.addon',
+      providerName: 'AnimES',
+      kind: SourceKind.addon,
+      title: 'AnimeAV1 MP4Upload',
+      url: 'https://a4.mp4upload.com/video.mp4',
+      headers: {'Referer': 'https://a1.mp4upload.com'},
+    );
+
+    await _pump(
+      tester,
+      streams: const StreamSearchResult(sources: [protectedSource]),
+      onPlayerExtra: (value) => extra = value,
+    );
+
+    await tester.tap(find.textContaining('To You Two Thousand Years Later'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('AnimeAV1 MP4Upload'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('PLAYER'), findsOneWidget);
+    expect(extra?['httpHeaders'], {'Referer': 'https://a1.mp4upload.com'});
   });
 
   testWidgets('si el addon no publica ficha, se queda con el catálogo',

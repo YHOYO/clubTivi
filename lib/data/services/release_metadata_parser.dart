@@ -7,15 +7,65 @@ library;
 
 /// `4K`, `1080p`, `720p`, `480p` o cadena vacía cuando no se declara.
 ///
-/// Sin distinguir mayúsculas: los addons etiquetan igual `4k` que `4K` (el
-/// nombre de Torrentio, por ejemplo, viene en minúsculas).
+/// Sin distinguir mayúsculas, pero con límites de palabra: `Wolfmax4k` es el
+/// nombre de un tracker, no una resolución 4K. Los addons etiquetan igual
+/// `4k` que `4K` (el nombre de Torrentio, por ejemplo, viene en minúsculas).
 String qualityFromText(String text) {
   final value = text.toLowerCase();
-  if (value.contains('2160p') || value.contains('4k')) return '4K';
-  if (value.contains('1080p')) return '1080p';
-  if (value.contains('720p')) return '720p';
-  if (value.contains('480p')) return '480p';
+  if (RegExp(r'\b(2160p|4k)\b').hasMatch(value)) return '4K';
+  if (RegExp(r'\b1080p\b').hasMatch(value)) return '1080p';
+  if (RegExp(r'\b720p\b').hasMatch(value)) return '720p';
+  if (RegExp(r'\b480p\b').hasMatch(value)) return '480p';
   return '';
+}
+
+/// Codec, HDR y fuente del release, para la segunda línea del selector.
+///
+/// Devuelve una cadena vacía cuando el addon no declara nada; nunca inventa
+/// `SDR` ni un codec por defecto.
+String qualityDetailFromText(String text) {
+  final value = text.toLowerCase();
+  final parts = <String>[];
+
+  if (RegExp(r'\b(h\.?265|hevc|x265)\b').hasMatch(value)) {
+    parts.add('HEVC');
+  } else if (RegExp(r'\b(h\.?264|avc|x264)\b').hasMatch(value)) {
+    parts.add('H.264');
+  } else if (RegExp(r'\bav1\b').hasMatch(value)) {
+    parts.add('AV1');
+  } else if (RegExp(r'\bxvid\b').hasMatch(value)) {
+    parts.add('XviD');
+  }
+
+  if (RegExp(r'\b(dv|dolby vision)\b').hasMatch(value)) {
+    parts.add('DV');
+  } else if (RegExp(r'\bhdr10\+\b').hasMatch(value)) {
+    parts.add('HDR10+');
+  } else if (RegExp(r'\bhdr10\b').hasMatch(value)) {
+    parts.add('HDR10');
+  } else if (RegExp(r'\bhdr\b').hasMatch(value)) {
+    parts.add('HDR');
+  }
+
+  if (RegExp(r'\bremux\b').hasMatch(value)) {
+    parts.add('REMUX');
+  } else if (RegExp(r'\bblu-?ray\b').hasMatch(value)) {
+    parts.add('BluRay');
+  } else if (RegExp(r'\bweb-?dl\b').hasMatch(value)) {
+    parts.add('WEB-DL');
+  } else if (RegExp(r'\bweb-?rip\b').hasMatch(value)) {
+    parts.add('WEBRip');
+  } else if (RegExp(r'\bweb\b').hasMatch(value)) {
+    parts.add('WEB');
+  } else if (RegExp(r'\bhdtv\b').hasMatch(value)) {
+    parts.add('HDTV');
+  } else if (RegExp(r'\bdvd-?rip\b').hasMatch(value)) {
+    parts.add('DVDRip');
+  } else if (RegExp(r'\bbr-?rip\b').hasMatch(value)) {
+    parts.add('BRRip');
+  }
+
+  return parts.join(' · ');
 }
 
 /// Primer `NN GB` / `NN MB` del texto, en bytes.

@@ -58,7 +58,9 @@ class StreamSource {
   /// Proveedor que lo encontró (`torrentio`, `real-debrid`, …).
   final String providerId;
 
-  /// Etiqueta visible del proveedor (`torrent`, `real-debrid ⚡`, …).
+  /// Addon o proveedor de origen (`Torrentio`, `Comet`, `torrent`, …).
+  /// No se sustituye por el servicio debrid: la fila debe seguir diciendo de
+  /// qué addon viene aunque la fuente esté cacheada.
   final String providerName;
 
   final SourceKind kind;
@@ -85,11 +87,23 @@ class StreamSource {
   /// Disponibilidad instantánea en el servicio debrid.
   final bool isCached;
 
+  /// Servicio debrid que tiene la fuente cacheada, si aplica.
+  final String? cachedBy;
+
   /// Idiomas de audio normalizados (`es-419`, `es`, `en`, …).
   final Set<String> audioLanguages;
 
+  /// `MULTI` o `DUAL` cuando el release declara varias pistas sin decir cuáles.
+  final String? audioMode;
+
   /// Idiomas de subtítulos disponibles en la propia fuente.
   final Set<String> subtitleLanguages;
+
+  /// True cuando el addon anuncia subtítulos pero no su idioma.
+  final bool hasSubtitles;
+
+  /// Detalle técnico que no cabe en el badge: codec, HDR y fuente.
+  final String? qualityDetail;
 
   /// Subtítulos externos ya referenciados por el proveedor.
   final List<SubtitleReference> subtitles;
@@ -119,8 +133,12 @@ class StreamSource {
     this.sizeBytes,
     this.seeds,
     this.isCached = false,
+    this.cachedBy,
     this.audioLanguages = const {},
+    this.audioMode,
     this.subtitleLanguages = const {},
+    this.hasSubtitles = false,
+    this.qualityDetail,
     this.subtitles = const [],
     this.headers = const {},
     this.referer,
@@ -151,11 +169,21 @@ class StreamSource {
 
   String get filesizeDisplay {
     final bytes = sizeBytes;
-    if (bytes == null) return '';
+    if (bytes == null || bytes <= 0) return '';
     final gb = bytes / (1024 * 1024 * 1024);
     if (gb >= 1) return '${gb.toStringAsFixed(1)} GB';
     final mb = bytes / (1024 * 1024);
     return '${mb.toStringAsFixed(0)} MB';
+  }
+
+  /// Primera línea del release, sin la lista de `👤/💾/⚙️` que algunos addons
+  /// pegan en `title`. La fila del selector usa esto en vez del blob completo.
+  String get displayName {
+    for (final line in title.split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.isNotEmpty) return trimmed;
+    }
+    return title.trim();
   }
 
   StreamSource copyWith({
@@ -172,8 +200,12 @@ class StreamSource {
     int? sizeBytes,
     int? seeds,
     bool? isCached,
+    String? cachedBy,
     Set<String>? audioLanguages,
+    String? audioMode,
     Set<String>? subtitleLanguages,
+    bool? hasSubtitles,
+    String? qualityDetail,
     List<SubtitleReference>? subtitles,
     Map<String, String>? headers,
     String? referer,
@@ -194,8 +226,12 @@ class StreamSource {
       sizeBytes: sizeBytes ?? this.sizeBytes,
       seeds: seeds ?? this.seeds,
       isCached: isCached ?? this.isCached,
+      cachedBy: cachedBy ?? this.cachedBy,
       audioLanguages: audioLanguages ?? this.audioLanguages,
+      audioMode: audioMode ?? this.audioMode,
       subtitleLanguages: subtitleLanguages ?? this.subtitleLanguages,
+      hasSubtitles: hasSubtitles ?? this.hasSubtitles,
+      qualityDetail: qualityDetail ?? this.qualityDetail,
       subtitles: subtitles ?? this.subtitles,
       headers: headers ?? this.headers,
       referer: referer ?? this.referer,

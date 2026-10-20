@@ -44,6 +44,22 @@ void main() {
           ..write('<!DOCTYPE html>\n<html lang="es"><head><title>POLÍTICA DE '
               'SEGURIDAD INFORMACIÓN</title></head><body>Bloqueado</body>'
               '</html>');
+      } else if (path == '/hotlink.mp4') {
+        // CDN que rechaza el hotlink: 403 con HTML, sin ser una página del ISP.
+        request.response
+          ..statusCode = 403
+          ..write('<html><body>403 Forbidden</body></html>');
+      } else if (path == '/protected.mp4') {
+        // Sólo sirve si el cliente manda el Referer que el addon publica.
+        if (request.headers.value('referer') != 'https://cdn.test/') {
+          request.response
+            ..statusCode = 403
+            ..write('<html><body>403 Forbidden</body></html>');
+        } else {
+          request.response
+            ..statusCode = 206
+            ..add(List<int>.filled(4096, 0x00));
+        }
       } else if (path == '/login.m3u8') {
         request.response
           ..statusCode = 200
@@ -393,6 +409,28 @@ void main() {
       final result = await probe.probeUrl(url('/forbidden.m3u8'));
       expect(result.status, ProbeStatus.forbidden);
       expect(result.verdict, ProbeVerdict.serverSide);
+    });
+
+    test('en VOD un 403 HTML es rechazo del CDN, no bloqueo del ISP', () async {
+      final result = await probe.probeUrl(
+        url('/hotlink.mp4'),
+        detectBlockPage: false,
+      );
+      expect(result.status, ProbeStatus.forbidden);
+      expect(result.httpStatus, 403);
+      expect(result.verdict, ProbeVerdict.serverSide,
+          reason: 'no puede culpar a la red de un hotlink rechazado');
+      expect(result.advice, isNot(contains('filtered')));
+      expect(result.advice, contains('refuses the connection'));
+    });
+
+    test('las cabeceras del addon se envían al sondear un VOD', () async {
+      final result = await probe.probeUrl(
+        url('/protected.mp4'),
+        headers: const {'Referer': 'https://cdn.test/'},
+      );
+      expect(result.status, ProbeStatus.ok);
+      expect(receivedHeaders['/protected.mp4']?['referer'], 'https://cdn.test/');
     });
   });
 

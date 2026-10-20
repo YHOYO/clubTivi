@@ -67,16 +67,20 @@ void main() {
     final first = sources.first;
     expect(first.kind, SourceKind.torrent);
     expect(first.providerId, 'torrentio');
-    expect(first.providerName, 'torrent');
+    expect(first.providerName, 'Torrentio');
     expect(first.locator, StreamLocator.magnet);
     expect(first.infoHash, 'ABCDEF0123456789ABCDEF0123456789ABCDEF01');
     expect(first.fileIdx, 3);
     expect(first.title, contains('Movie.2024.1080p.WEB-DL.Latino'));
     expect(first.quality, '1080p');
+    expect(first.qualityDetail, contains('WEB-DL'));
     expect(first.seeds, 120);
     expect(first.sizeBytes, closeTo(4.2 * 1024 * 1024 * 1024, 1));
     expect(first.audioLanguages, {kLanguageSpanishLatin});
-    expect(first.magnetUrl, contains('ABCDEF0123456789ABCDEF0123456789ABCDEF01'));
+    expect(
+      first.magnetUrl,
+      contains('ABCDEF0123456789ABCDEF0123456789ABCDEF01'),
+    );
     expect(first.isAvailable, isTrue);
 
     final second = sources.last;
@@ -86,11 +90,13 @@ void main() {
     expect(second.seeds, 8);
   });
 
-  test('si Torrentio falla devuelve una lista vacía, no una excepción',
-      () async {
-    final dio = Dio()..httpClientAdapter = _FakeAdapter('not json');
-    final client = TorrentSearchClient(dio: dio);
+  test(
+    'si Torrentio falla devuelve una lista vacía, no una excepción',
+    () async {
+      final dio = Dio()..httpClientAdapter = _FakeAdapter('not json');
+      final client = TorrentSearchClient(dio: dio);
 
-    expect(await client.searchMovie('tt1234567'), isEmpty);
-  });
+      expect(await client.searchMovie('tt1234567'), isEmpty);
+    },
+  );
 }

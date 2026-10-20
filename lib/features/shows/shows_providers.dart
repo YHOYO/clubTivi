@@ -157,8 +157,8 @@ class EpisodeParams {
 
 /// Fuentes para reproducción, ya rankeadas por las preferencias de idioma
 /// persistidas, junto con los addons que no pudieron responder. El ranking es
-/// puro; el provider solo lo compone con el repositorio y recorta a las 10
-/// mejores para la pantalla actual.
+/// puro; el provider solo lo compone con el repositorio. No recorta: el
+/// selector necesita la lista completa para poder filtrar por español.
 final resolveStreamProvider =
     FutureProvider.family<StreamSearchResult, StreamResolveParams>((
       ref,
@@ -172,10 +172,7 @@ final resolveStreamProvider =
         episode: params.episode,
       );
       return result.copyWith(
-        sources: rankStreams(
-          result.sources,
-          preferences,
-        ).take(10).toList(growable: false),
+        sources: rankStreams(result.sources, preferences),
       );
     });
 
@@ -417,10 +414,7 @@ final addonStreamsProvider =
         addonId: params.addonId,
       );
       return result.copyWith(
-        sources: rankStreams(
-          result.sources,
-          preferences,
-        ).take(10).toList(growable: false),
+        sources: rankStreams(result.sources, preferences),
       );
     });
 

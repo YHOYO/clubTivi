@@ -364,7 +364,7 @@ class ShowsRepository {
         enriched = enriched.copyWith(
           kind: SourceKind.debrid,
           isCached: true,
-          providerName: '${cachedSource ?? 'debrid'} ⚡',
+          cachedBy: cachedSource,
         );
       }
       if (!debridEnabled) {

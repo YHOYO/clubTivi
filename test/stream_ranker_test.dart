@@ -9,6 +9,7 @@ StreamSource source({
   required String id,
   Set<String> audio = const {},
   Set<String> subs = const {},
+  String? audioMode,
   bool cached = false,
   SourceKind kind = SourceKind.torrent,
   String quality = '1080p',
@@ -25,6 +26,7 @@ StreamSource source({
     seeds: seeds,
     isCached: cached,
     audioLanguages: audio,
+    audioMode: audioMode,
     subtitleLanguages: subs,
     magnetUrl: 'magnet:?xt=urn:btih:$id',
   );
@@ -56,7 +58,11 @@ void main() {
       'los subtítulos desempatan cuando el audio empata',
       [
         source(id: 'sin-subs', audio: {kLanguageSpanishLatin}),
-        source(id: 'con-subs', audio: {kLanguageSpanishLatin}, subs: {kLanguageSpanish}),
+        source(
+          id: 'con-subs',
+          audio: {kLanguageSpanishLatin},
+          subs: {kLanguageSpanish},
+        ),
       ],
       defaults,
       ['con-subs', 'sin-subs'],
@@ -81,18 +87,25 @@ void main() {
       ),
       ['english', 'latino'],
     ),
-    _RankCase(
-      'lista vacía devuelve lista vacía',
-      [],
-      defaults,
-      [],
-    ),
+    _RankCase('lista vacía devuelve lista vacía', [], defaults, []),
     _RankCase(
       'el tipo de fuente ordena tras idioma y subtítulos',
       [
-        source(id: 'torrent', kind: SourceKind.torrent, audio: {kLanguageSpanishLatin}),
-        source(id: 'addon', kind: SourceKind.addon, audio: {kLanguageSpanishLatin}),
-        source(id: 'debrid', kind: SourceKind.debrid, audio: {kLanguageSpanishLatin}),
+        source(
+          id: 'torrent',
+          kind: SourceKind.torrent,
+          audio: {kLanguageSpanishLatin},
+        ),
+        source(
+          id: 'addon',
+          kind: SourceKind.addon,
+          audio: {kLanguageSpanishLatin},
+        ),
+        source(
+          id: 'debrid',
+          kind: SourceKind.debrid,
+          audio: {kLanguageSpanishLatin},
+        ),
       ],
       defaults,
       ['debrid', 'addon', 'torrent'],
@@ -153,9 +166,138 @@ void main() {
     });
   }
 
+  test('Solo español deja fuera MULTi/DUAL sin bandera española', () {
+    final input = [
+      source(id: 'multi', audio: {kLanguageEnglish, 'pl'}, audioMode: 'MULTI'),
+      source(id: 'castellano', audio: {kLanguageSpanish}),
+      source(id: 'vose', subs: {kLanguageSpanish}),
+      source(id: 'english', audio: {kLanguageEnglish}),
+      source(id: 'latino', audio: {kLanguageSpanishLatin}),
+    ];
+
+    final selected = selectStreams(
+      input,
+      preferences: defaults,
+      spanishOnly: true,
+    );
+
+    expect(selected.map((s) => s.id), ['castellano', 'vose', 'latino']);
+    expect(isSpanishSource(input.first), isFalse);
+    expect(isSpanishSource(input[1]), isTrue);
+    expect(
+      isSpanishSource(input[2]),
+      isTrue,
+      reason: 'VOSE son subtítulos españoles',
+    );
+  });
+
+  test('Solo español también reconoce subtítulos latinos', () {
+    final input = [
+      source(id: 'sub-latino', subs: {kLanguageSpanishLatin}),
+      source(id: 'english', audio: {kLanguageEnglish}),
+    ];
+
+    expect(hasSpanishSubtitles(input.first), isTrue);
+    final selected = selectStreams(
+      input,
+      preferences: defaults,
+      spanishOnly: true,
+    );
+    expect(selected.map((s) => s.id), ['sub-latino']);
+  });
+
+  test(
+    'Español primero sube audio español aunque las preferencias sean inglés',
+    () {
+      const englishFirst = LanguagePreferences(
+        audioOrder: [kLanguageEnglish, 'fr'],
+        subtitleOrder: [kLanguageEnglish],
+      );
+      final input = [
+        source(id: 'english', audio: {kLanguageEnglish}),
+        source(id: 'castellano', audio: {kLanguageSpanish}),
+        source(id: 'latino', audio: {kLanguageSpanishLatin}),
+        source(id: 'frances', audio: {'fr'}),
+      ];
+
+      final selected = selectStreams(
+        input,
+        preferences: englishFirst,
+        spanishFirst: true,
+      );
+
+      expect(selected.map((s) => s.id), [
+        'latino',
+        'castellano',
+        'english',
+        'frances',
+      ]);
+      expect(input.map((s) => s.id), [
+        'english',
+        'castellano',
+        'latino',
+        'frances',
+      ], reason: 'no muta la entrada');
+    },
+  );
+
+  test(
+    'las preferencias guardadas siguen mandando dentro y fuera de español',
+    () {
+      const englishFirst = LanguagePreferences(
+        audioOrder: [kLanguageEnglish, kLanguageSpanish],
+        subtitleOrder: [kLanguageEnglish],
+      );
+
+      final adjusted = spanishFirstPreferences(englishFirst);
+
+      expect(adjusted.audioRank({kLanguageEnglish}), greaterThan(0));
+      expect(
+        adjusted.audioRank({kLanguageSpanish}),
+        0,
+        reason: 'el usuario ya prefería castellano sobre latino',
+      );
+      expect(adjusted.audioRank({kLanguageSpanishLatin}), 1);
+      expect(adjusted.subtitleRank({kLanguageEnglish}), greaterThan(0));
+      expect(adjusted.subtitleRank({kLanguageSpanish}), 0);
+    },
+  );
+
+  test('Español primero conserva el orden guardado entre variantes', () {
+    const custom = LanguagePreferences(
+      audioOrder: [kLanguageEnglish, kLanguageSpanish, kLanguageSpanishLatin],
+      subtitleOrder: [
+        kLanguageEnglish,
+        kLanguageSpanishLatin,
+        kLanguageSpanish,
+      ],
+    );
+
+    final adjusted = spanishFirstPreferences(custom);
+
+    expect(adjusted.audioOrder, [
+      kLanguageSpanish,
+      kLanguageSpanishLatin,
+      kLanguageEnglish,
+    ]);
+    expect(adjusted.subtitleOrder, [
+      kLanguageSpanishLatin,
+      kLanguageSpanish,
+      kLanguageEnglish,
+    ]);
+  });
+
   test('es determinista y no modifica la lista de entrada', () {
-    final a = source(id: 'b', title: 'Same.Release', audio: {kLanguageSpanishLatin});
-    final b = source(id: 'a', title: 'Same.Release', audio: {kLanguageSpanishLatin});
+    final a = source(
+      id: 'b',
+      title: 'Same.Release',
+      audio: {kLanguageSpanishLatin},
+    );
+    final b = source(
+      id: 'a',
+      title: 'Same.Release',
+      audio: {kLanguageSpanishLatin},
+    );
     final input = [a, b];
 
     final first = rankStreams(input, defaults).map((s) => s.id).toList();
@@ -163,7 +305,9 @@ void main() {
 
     expect(first, ['a', 'b'], reason: 'desempate por id');
     expect(second, first);
-    expect(input.map((s) => s.id).toList(), ['b', 'a'],
-        reason: 'rankStreams no ordena la lista original');
+    expect(input.map((s) => s.id).toList(), [
+      'b',
+      'a',
+    ], reason: 'rankStreams no ordena la lista original');
   });
 }

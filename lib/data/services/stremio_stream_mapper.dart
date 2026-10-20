@@ -22,31 +22,45 @@ StreamSource? stremioStreamToSource(
   required int index,
 }) {
   final url = _string(stream['url']);
-  final infoHash = _string(stream['infoHash']);
-  if ((url == null || url.isEmpty) && (infoHash == null || infoHash.isEmpty)) {
+  // Algunos addons mandan un magnet en `url`. No es un enlace HTTP: hay que
+  // tratarlo como torrent para que el selector no intente abrirlo directo.
+  final isMagnet = url != null && url.toLowerCase().startsWith('magnet:');
+  final infoHash =
+      _string(stream['infoHash']) ??
+      (isMagnet ? _infoHashFromMagnet(url) : null);
+  if (isMagnet && (infoHash == null || infoHash.isEmpty)) return null;
+  if (!isMagnet &&
+      (url == null || url.isEmpty) &&
+      (infoHash == null || infoHash.isEmpty)) {
     return null;
   }
 
   final name = _string(stream['name']) ?? '';
   final title = _string(stream['title']) ?? '';
+  final description = _string(stream['description']) ?? '';
   final behaviorHints = stream['behaviorHints'];
   final hints = behaviorHints is Map ? behaviorHints : const {};
 
   final filename = _string(hints['filename']);
   final headers = _headersFromHints(hints);
   final subtitles = _subtitlesFrom(stream['subtitles']);
-  final searchText = [name, title, filename ?? ''].join(' ');
+  // Comet manda el release y las banderas en `description`, no en `title`.
+  // Todo lo que se use para decidir idioma/calidad/tamaño tiene que entrar aquí.
+  final searchText = [name, title, filename ?? '', description].join(' ');
   final languages = ReleaseLanguageParser.parse(searchText);
-  final videoSize = _int(hints['videoSize']);
+  final videoSize = _positiveInt(hints['videoSize']);
 
   final displayTitle = title.isNotEmpty
       ? title
-      : (filename != null && filename.isNotEmpty ? filename : name);
+      : (filename != null && filename.isNotEmpty
+            ? filename
+            : (_descriptionTitle(description) ?? name));
 
   final quality = qualityFromText(searchText);
   final sizeBytes = videoSize ?? sizeBytesFromText(searchText);
+  final qualityDetail = qualityDetailFromText(searchText);
 
-  if (url != null && url.isNotEmpty) {
+  if (!isMagnet && url != null && url.isNotEmpty) {
     return StreamSource(
       id: '$providerId:url:$index',
       providerId: providerId,
@@ -56,9 +70,12 @@ StreamSource? stremioStreamToSource(
       url: url,
       quality: quality.isEmpty ? null : quality,
       sizeBytes: sizeBytes,
-      seeds: seedsFromText(title),
+      seeds: seedsFromText('$title $description'),
       audioLanguages: languages.audio,
+      audioMode: languages.audioMode,
       subtitleLanguages: languages.subtitles,
+      hasSubtitles: languages.hasSubtitles,
+      qualityDetail: qualityDetail.isEmpty ? null : qualityDetail,
       subtitles: subtitles,
       headers: headers,
       referer: _referer(headers),
@@ -77,16 +94,23 @@ StreamSource? stremioStreamToSource(
     title: displayTitle,
     infoHash: hash,
     fileIdx: fileIdx,
-    magnetUrl: buildMagnet(
-      infoHash: hash,
-      name: filename?.isNotEmpty == true ? filename! : (name.isNotEmpty ? name : displayTitle),
-      sources: sources,
-    ),
+    magnetUrl: isMagnet
+        ? url
+        : buildMagnet(
+            infoHash: hash,
+            name: filename?.isNotEmpty == true
+                ? filename!
+                : (name.isNotEmpty ? name : displayTitle),
+            sources: sources,
+          ),
     quality: quality.isEmpty ? null : quality,
     sizeBytes: sizeBytes,
-    seeds: seedsFromText(title),
+    seeds: seedsFromText('$title $description'),
     audioLanguages: languages.audio,
+    audioMode: languages.audioMode,
     subtitleLanguages: languages.subtitles,
+    hasSubtitles: languages.hasSubtitles,
+    qualityDetail: qualityDetail.isEmpty ? null : qualityDetail,
     subtitles: subtitles,
     headers: headers,
     referer: _referer(headers),
@@ -128,14 +152,24 @@ List<SubtitleReference> _subtitlesFrom(Object? value) {
     if (url == null || url.isEmpty) continue;
     final id = _string(entry['id']) ?? url;
     final lang = _string(entry['lang']) ?? '';
-    subtitles.add(SubtitleReference(
-      id: id,
-      url: url,
-      language: normalizeLanguageCode(lang) ?? lang,
-      label: lang.isEmpty ? null : lang,
-    ));
+    subtitles.add(
+      SubtitleReference(
+        id: id,
+        url: url,
+        language: normalizeLanguageCode(lang) ?? lang,
+        label: lang.isEmpty ? null : lang,
+      ),
+    );
   }
   return subtitles;
+}
+
+String? _infoHashFromMagnet(String url) {
+  final match = RegExp(
+    r'btih:([a-fA-F0-9]{40})',
+    caseSensitive: false,
+  ).firstMatch(url);
+  return match?.group(1);
 }
 
 String? _string(Object? value) =>
@@ -144,6 +178,25 @@ String? _string(Object? value) =>
 int? _int(Object? value) {
   if (value is int) return value;
   if (value is num) return value.toInt();
+  return null;
+}
+
+int? _positiveInt(Object? value) {
+  final parsed = _int(value);
+  return parsed != null && parsed > 0 ? parsed : null;
+}
+
+/// Primera línea de `description`, sin el icono que algunos addons ponen
+/// delante del nombre del archivo. Comet y los addons de anime solo mandan
+/// `description`, así que sin esto la fila mostraría el nombre del servidor.
+String? _descriptionTitle(String description) {
+  for (final line in description.split('\n')) {
+    final trimmed = line
+        .trim()
+        .replaceFirst(RegExp(r'^(📄|🎬|📁|🔗)\s*'), '')
+        .trim();
+    if (trimmed.isNotEmpty) return trimmed;
+  }
   return null;
 }
 

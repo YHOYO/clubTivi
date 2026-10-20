@@ -13,11 +13,13 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:clubtivi/app/router.dart';
 import 'package:clubtivi/data/models/media_video.dart';
 import 'package:clubtivi/data/models/stream_search_result.dart';
 import 'package:clubtivi/data/models/stream_source.dart';
 import 'package:clubtivi/data/models/stremio_addon.dart';
 import 'package:clubtivi/data/repositories/shows_repository.dart';
+import 'package:clubtivi/data/services/channel_probe_service.dart';
 import 'package:clubtivi/data/services/trailer_stream_resolver.dart';
 import 'package:clubtivi/features/player/player_screen.dart';
 import 'package:clubtivi/features/player/player_service.dart';
@@ -122,6 +124,7 @@ void main() {
   late HttpServer server;
   late String streamUrl;
   late String movieStreamUrl;
+  late String protectedStreamUrl;
   late String silentVideoUrl;
   late Uint8List wav;
   late Uint8List silentVideo;
@@ -132,6 +135,17 @@ void main() {
     silentVideo = await _videoWithoutAudio();
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((request) async {
+      // Igual que un CDN que rechaza el hotlink: sin el Referer del addon
+      // contesta 403 con HTML, nunca sirve el vídeo.
+      if (request.uri.path == '/protected.wav' &&
+          request.headers.value('referer') != 'https://cdn.test/') {
+        request.response
+          ..statusCode = HttpStatus.forbidden
+          ..headers.contentType = ContentType.html
+          ..write('<html><body>403 Forbidden</body></html>');
+        await request.response.close();
+        return;
+      }
       final isVideo = request.uri.path.endsWith('.mp4');
       final body = isVideo ? silentVideo : wav;
       final range = request.headers.value(HttpHeaders.rangeHeader);
@@ -166,6 +180,7 @@ void main() {
     });
     streamUrl = 'http://127.0.0.1:${server.port}/live.wav';
     movieStreamUrl = 'http://127.0.0.1:${server.port}/movie.wav';
+    protectedStreamUrl = 'http://127.0.0.1:${server.port}/protected.wav';
     silentVideoUrl = 'http://127.0.0.1:${server.port}/video-only.mp4';
   });
 
@@ -273,6 +288,110 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     expect(live.currentUrl, isNull, reason: 'el VOD debe pararse al salir');
     expect(live.player.state.playing, isFalse);
+  });
+
+  testWidgets('un 403 de CDN en VOD no se guarda como bloqueo de red',
+      (tester) async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          home: PlayerScreen(
+            streamUrl: protectedStreamUrl,
+            channelName: 'Sin referer',
+          ),
+        ),
+      ),
+    );
+
+    final store = container.read(channelHealthStoreProvider);
+    await waitUntil(
+      tester,
+      () => store.resultForUrl(protectedStreamUrl) != null,
+      timeout: const Duration(seconds: 15),
+      reason: 'el sondeo previo no terminó',
+    );
+    final verdict = store.resultForUrl(protectedStreamUrl)!;
+    expect(verdict.status, ProbeStatus.forbidden);
+    expect(verdict.verdict, ProbeVerdict.serverSide,
+        reason: 'un CDN que rechaza el hotlink no es el ISP');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('el router real entrega las cabeceras al reproductor',
+      (tester) async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final appRouter = createRouter();
+    addTearDown(appRouter.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp.router(routerConfig: appRouter),
+      ),
+    );
+    await tester.pump();
+
+    appRouter.go('/player', extra: {
+      'streamUrl': protectedStreamUrl,
+      'channelName': 'Protegido',
+      'httpHeaders': {'Referer': 'https://cdn.test/'},
+    });
+    await tester.pump();
+    await waitUntil(
+      tester,
+      () => find.byType(PlayerScreen).evaluate().isNotEmpty,
+      reason: 'el router no abrió el reproductor',
+    );
+
+    final screen = tester.widget<PlayerScreen>(find.byType(PlayerScreen));
+    expect(screen.httpHeaders, {'Referer': 'https://cdn.test/'});
+    expect(screen.streamUrl, protectedStreamUrl);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('un VOD que exige Referer reproduce con sus cabeceras',
+      (tester) async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final live = container.read(playerServiceProvider);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          home: PlayerScreen(
+            streamUrl: protectedStreamUrl,
+            channelName: 'Protegido',
+            httpHeaders: const {'Referer': 'https://cdn.test/'},
+          ),
+        ),
+      ),
+    );
+
+    await waitUntil(
+      tester,
+      () => live.player.state.position >= const Duration(seconds: 1),
+      reason: 'el VOD con Referer no llegó a reproducirse',
+    );
+    expect(live.lastError, isNull);
+    expect(
+      find.textContaining('Blocked by the network'),
+      findsNothing,
+      reason: 'un 403 de CDN no puede reportarse como bloqueo del ISP',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+    expect(live.currentUrl, isNull);
   });
 
   testWidgets(

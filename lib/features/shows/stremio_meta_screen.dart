@@ -9,6 +9,7 @@ import '../../data/models/stream_search_result.dart';
 import '../../data/models/stream_source.dart';
 import '../../data/services/debrid_settings.dart';
 import '../player/player_service.dart';
+import 'await_provider.dart';
 import 'shows_providers.dart';
 import 'stream_picker.dart';
 
@@ -373,7 +374,10 @@ class _StremioMetaScreenState extends ConsumerState<StremioMetaScreen> {
     // pedir la reproducción, no medio minuto después al abrir el reproductor.
     await ref.read(playerServiceProvider).stop();
     try {
-      final result = await ref.read(addonStreamsProvider(params).future);
+      final result = await awaitProviderFuture(
+        ref,
+        addonStreamsProvider(params),
+      );
       if (!mounted) return;
       if (result.isEmpty) {
         _snackbar(_noStreamsMessage(result));
@@ -417,6 +421,9 @@ class _StremioMetaScreenState extends ConsumerState<StremioMetaScreen> {
         'streamUrl': url,
         'channelName': title,
         'channelLogo': meta.poster ?? '',
+        // Las cabeceras del addon sólo valen para su URL directa: un enlace
+        // resuelto por debrid ya no pertenece a ese CDN.
+        if (stream.isDirect) 'httpHeaders': stream.headers,
       });
     } on SourceUnavailableException catch (e) {
       _snackbar(e.message);

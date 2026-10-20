@@ -66,6 +66,72 @@ int compareStreams(
   return a.id.compareTo(b.id);
 }
 
+/// True cuando la fuente ofrece audio en español (latino o castellano).
+bool hasSpanishAudio(StreamSource source) =>
+    source.audioLanguages.any(_isSpanishCode);
+
+/// True cuando la fuente ofrece subtítulos en español (castellano o latino).
+bool hasSpanishSubtitles(StreamSource source) =>
+    source.subtitleLanguages.any(_isSpanishCode);
+
+/// Una fuente entra en «Solo español» si tiene audio o subtítulos en español.
+bool isSpanishSource(StreamSource source) =>
+    hasSpanishAudio(source) || hasSpanishSubtitles(source);
+
+/// Preferencias guardadas con español delante, conservando el orden relativo
+/// que el usuario eligió dentro del español y entre los demás idiomas. Si su
+/// lista no incluye ninguna variante, se añaden las dos por defecto.
+LanguagePreferences spanishFirstPreferences(LanguagePreferences preferences) {
+  List<String> promoted(List<String> order, List<String> defaults) {
+    final normalized = <String>[];
+    for (final code in order) {
+      final value = normalizeLanguageCode(code);
+      if (value != null) normalized.add(value);
+    }
+    final spanish = normalized.where(_isSpanishCode).toList();
+    final rest = normalized.where((code) => !_isSpanishCode(code)).toList();
+    final group = spanish.isEmpty ? [...defaults] : spanish;
+    for (final code in defaults) {
+      if (!group.contains(code)) group.add(code);
+    }
+    return [...group, ...rest];
+  }
+
+  return preferences.copyWith(
+    audioOrder: promoted(preferences.audioOrder, const [
+      kLanguageSpanishLatin,
+      kLanguageSpanish,
+    ]),
+    subtitleOrder: promoted(preferences.subtitleOrder, const [
+      kLanguageSpanish,
+      kLanguageSpanishLatin,
+    ]),
+  );
+}
+
+/// Filtra y ordena lo que se va a pintar en el selector.
+///
+/// [sources] llega ya rankeado por el provider con las preferencias guardadas;
+/// si no se pide «español primero» se respeta ese orden. El filtro nunca debe
+/// aplicarse antes de este punto: el provider ya no recorta a 10.
+List<StreamSource> selectStreams(
+  List<StreamSource> sources, {
+  required LanguagePreferences preferences,
+  bool spanishOnly = false,
+  bool spanishFirst = false,
+}) {
+  final filtered = spanishOnly
+      ? sources.where(isSpanishSource).toList(growable: false)
+      : List<StreamSource>.of(sources);
+  if (!spanishFirst) return filtered;
+  return rankStreams(filtered, spanishFirstPreferences(preferences));
+}
+
+bool _isSpanishCode(String code) {
+  final normalized = normalizeLanguageCode(code);
+  return normalized == kLanguageSpanish || normalized == kLanguageSpanishLatin;
+}
+
 int _kindPriority(SourceKind kind) {
   switch (kind) {
     case SourceKind.debrid:

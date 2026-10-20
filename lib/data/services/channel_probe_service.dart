@@ -323,10 +323,14 @@ class ChannelProbeService {
         timeout: timeout,
       );
 
+  /// [detectBlockPage] separa una página de bloqueo del proveedor de red de un
+  /// rechazo del propio servidor. En VOD conviene desactivarlo: un CDN que
+  /// exige `Referer` contesta 403 con HTML y no es el ISP.
   Future<ProbeResult> probeUrl(
     String url, {
     Map<String, String> headers = const {},
     Duration timeout = const Duration(seconds: 8),
+    bool detectBlockPage = true,
   }) async {
     final isHls = url.toLowerCase().contains('.m3u8') ||
         url.toLowerCase().contains('.m3u?');
@@ -348,7 +352,12 @@ class ChannelProbeService {
         ),
       );
       stopwatch.stop();
-      return _classify(response, isHls, stopwatch.elapsedMilliseconds);
+      return _classify(
+        response,
+        isHls,
+        stopwatch.elapsedMilliseconds,
+        detectBlockPage: detectBlockPage,
+      );
     } on DioException catch (e) {
       stopwatch.stop();
       return classifyError(e, latencyMs: stopwatch.elapsedMilliseconds);
@@ -442,12 +451,17 @@ class ChannelProbeService {
         text.contains('security policy');
   }
 
-  ProbeResult _classify(Response<dynamic> response, bool isHls, int latencyMs) {
+  ProbeResult _classify(
+    Response<dynamic> response,
+    bool isHls,
+    int latencyMs, {
+    required bool detectBlockPage,
+  }) {
     final code = response.statusCode ?? 0;
     if (code == 401 || code == 403 || code == 451) {
       // Un 403 con HTML no es «el canal te rechaza»: es una página de bloqueo
       // de la red (filtro del proveedor de internet, antivirus, DNS).
-      if (_bodyLooksLikeWebPage(response.data)) {
+      if (detectBlockPage && _bodyLooksLikeWebPage(response.data)) {
         return ProbeResult(
             status: ProbeStatus.blocked, httpStatus: code, latencyMs: latencyMs);
       }

@@ -69,6 +69,51 @@ String? normalizeLanguageCode(String? raw) {
   return value;
 }
 
+/// Nombre visible de un código normalizado, para las filas del selector.
+String languageLabel(String code) {
+  switch (normalizeLanguageCode(code)) {
+    case kLanguageSpanishLatin:
+      return 'Latino';
+    case kLanguageSpanish:
+      return 'Español';
+    case kLanguageEnglish:
+      return 'Inglés';
+    case 'pt':
+      return 'Portugués';
+    case 'fr':
+      return 'Francés';
+    case 'de':
+      return 'Alemán';
+    case 'it':
+      return 'Italiano';
+    case 'ru':
+      return 'Ruso';
+    case 'ja':
+      return 'Japonés';
+    case 'ko':
+      return 'Coreano';
+    case 'zh':
+      return 'Chino';
+    case 'hi':
+      return 'Hindi';
+    case 'tr':
+      return 'Turco';
+    case 'pl':
+      return 'Polaco';
+    case 'nl':
+      return 'Neerlandés';
+    case 'sv':
+      return 'Sueco';
+    case 'uk':
+      return 'Ucraniano';
+    case 'ar':
+      return 'Árabe';
+    default:
+      final value = normalizeLanguageCode(code);
+      return value == null ? '?' : value.toUpperCase();
+  }
+}
+
 /// Orden de idiomas preferido para audio y para subtítulos.
 ///
 /// El orden es la prioridad: el índice 0 es el idioma favorito.

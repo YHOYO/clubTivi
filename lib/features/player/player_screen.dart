@@ -33,6 +33,11 @@ class PlayerScreen extends ConsumerStatefulWidget {
   final List<Map<String, dynamic>> channels;
   final int currentIndex;
 
+  /// Cabeceras que exige la fuente (por ejemplo el `Referer` de un CDN que
+  /// rechaza el hotlink). Un canal en vivo usa las suyas de la base de datos;
+  /// un VOD las recibe de su addon.
+  final Map<String, String> httpHeaders;
+
   const PlayerScreen({
     super.key,
     required this.streamUrl,
@@ -41,6 +46,7 @@ class PlayerScreen extends ConsumerStatefulWidget {
     this.alternativeUrls = const [],
     this.channels = const [],
     this.currentIndex = 0,
+    this.httpHeaders = const {},
   });
 
   @override
@@ -80,6 +86,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   /// Se guarda en initState porque `dispose` ya no puede leer providers.
   late final PlayerService _playerService;
+
+  /// Cabeceras con las que se abre y se sondea este flujo. Para un canal se
+  /// toman de su fila; para un VOD, del addon que lo publicó.
+  Map<String, String> get _streamHeaders {
+    if (widget.channels.isEmpty) return widget.httpHeaders;
+    final row = widget.channels[_channelIndex];
+    return (row['httpHeaders'] as Map<String, String>?) ??
+        const <String, String>{};
+  }
 
   // Track selection state
   bool _subtitlesEnabled = false;
@@ -230,11 +245,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         channelName: _currentChannelName,
         vanityName: widget.channels.isNotEmpty ? widget.channels[_channelIndex]['vanityName'] as String? : null,
         originalName: widget.channels.isNotEmpty ? widget.channels[_channelIndex]['tvgName'] as String? : null,
-        httpHeaders: widget.channels.isNotEmpty
-            ? (widget.channels[_channelIndex]['httpHeaders']
-                    as Map<String, String>?) ??
-                const <String, String>{}
-            : const <String, String>{},
+        httpHeaders: _streamHeaders,
       );
     }
 
@@ -261,15 +272,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     final urls = [widget.streamUrl, ...widget.alternativeUrls];
     if (_currentUrlIndex >= urls.length) return;
     final url = urls[_currentUrlIndex];
-    final headers = widget.channels.isNotEmpty
-        ? (widget.channels[_channelIndex]['httpHeaders'] as Map<String, String>?) ??
-            const <String, String>{}
-        : const <String, String>{};
 
     final result = await ref.read(channelProbeProvider).probeUrl(
           url,
-          headers: headers,
+          headers: _streamHeaders,
           timeout: const Duration(seconds: 6),
+          // Un 403 con HTML de un CDN no es una página del ISP: en VOD sólo
+          // significa que el servidor rechazó la petición (Referer, token…).
+          // La detección de bloqueo de red sigue activa para canales en vivo.
+          detectBlockPage: widget.channels.isNotEmpty,
         );
     if (!mounted) return;
     setState(() => _preflight = result);
