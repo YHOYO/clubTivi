@@ -44,3 +44,12 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 flutter_02.png
+
+# Credenciales de firma y paquetes de release: nunca al repositorio.
+# La clave Android se queda en android/app/upload-keystore.jks y su
+# contrasena en ~/.clubtivi, fuera del arbol del proyecto.
+**/*.jks
+**/*.keystore
+**/key.properties
+**/keystore-credentials.txt
+/dist/
