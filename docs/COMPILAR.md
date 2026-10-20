@@ -91,6 +91,7 @@ a la release del tag en GitHub.
 | Síntoma | Qué mirar |
 |---|---|
 | Falla al compilar en Windows | Visual Studio sin el workload de C++ de escritorio |
+| `error C1083: 'atlstr.h'` al compilar | `flutter_secure_storage_windows` usa ATL. `windows/CMakeLists.txt` busca `atlmfc` en la instalación de Visual Studio; si ninguna la tiene, instala el componente «C++ ATL» y vuelve a compilar |
 | Faltan plugins tras tocar `pubspec.yaml` | `flutter clean` y luego `flutter pub get` |
 | El script dice `ERROR: flutter test fallo` | Arregla los tests: es la puerta de calidad, no un fallo del script |
 | `ERROR: clubTivi esta abierto...` | Cierra la app antes de reempaquetar: bloquea el `clubtivi.exe` de `dist\clubTivi` |
