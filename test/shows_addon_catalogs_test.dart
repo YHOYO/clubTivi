@@ -3,6 +3,8 @@
 // carátula tiene que abrir la ficha del addon.
 import 'package:clubtivi/data/datasources/remote/stremio_addon_client.dart';
 import 'package:clubtivi/data/models/stremio_addon.dart';
+import 'package:clubtivi/data/services/api_key_store.dart';
+import 'package:clubtivi/data/services/secret_store.dart';
 import 'package:clubtivi/data/services/stremio_addon_settings.dart';
 import 'package:clubtivi/features/shows/shows_providers.dart';
 import 'package:clubtivi/features/shows/shows_screen.dart';
@@ -58,7 +60,9 @@ void main() {
     addTearDown(tester.view.reset);
 
     final client = _FakeClient();
-    final keys = ShowsApiKeysNotifier();
+    final keys = ShowsApiKeysNotifier(
+      store: ApiKeyStore(secrets: MemorySecretStore()),
+    );
     await keys.load();
     final settings = StremioAddonSettingsNotifier();
     await settings.load();
@@ -112,7 +116,9 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
-    final keys = ShowsApiKeysNotifier();
+    final keys = ShowsApiKeysNotifier(
+      store: ApiKeyStore(secrets: MemorySecretStore()),
+    );
     await keys.load();
     final settings = StremioAddonSettingsNotifier();
     await settings.load();

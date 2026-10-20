@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:logger/logger.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../data/services/secret_store.dart';
+
 final _log = Logger(printer: SimplePrinter());
 
 /// Client for LG WebOS TV SSAP protocol over WebSocket (port 3000).
@@ -19,9 +21,13 @@ class LgWebOsClient {
   bool _paired = false;
   StreamSubscription? _listenSub;
 
-  static const _prefKeyPrefix = 'lg_webos_key_';
+  /// Prefijo legado: la clave vive hoy en el almacén seguro.
+  static const _prefKeyPrefix = LegacySecretPrefs.webosPrefix;
 
-  LgWebOsClient({required this.host, this.port = 3000});
+  final SecretStore _secrets;
+
+  LgWebOsClient({required this.host, this.port = 3000, SecretStore? secrets})
+      : _secrets = secrets ?? SecureSecretStore();
 
   bool get isConnected => _ws != null && _paired;
 
@@ -30,9 +36,15 @@ class LgWebOsClient {
   /// The TV will show a pairing prompt on first connection.
   Future<bool> connect({Duration timeout = const Duration(seconds: 15)}) async {
     try {
-      // Load saved client key for this TV
+      // Load saved client key for this TV, migrating the legacy preference.
       final prefs = await SharedPreferences.getInstance();
-      _clientKey = prefs.getString('$_prefKeyPrefix$host');
+      final saved = await migratePrefSecret(
+        prefs: prefs,
+        store: _secrets,
+        prefKey: '$_prefKeyPrefix$host',
+        secretKey: SecretKeys.webosClientKey(host),
+      );
+      _clientKey = saved.value.isEmpty ? null : saved.value;
 
       _ws = await WebSocket.connect(
         'ws://$host:$port',
@@ -103,7 +115,13 @@ class LgWebOsClient {
       if (key != null && key.isNotEmpty) {
         _clientKey = key;
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('$_prefKeyPrefix$host', key);
+        await putSecret(
+          prefs: prefs,
+          store: _secrets,
+          prefKey: '$_prefKeyPrefix$host',
+          secretKey: SecretKeys.webosClientKey(host),
+          value: key,
+        );
         _log.i('WebOS paired with $host (key saved)');
       }
       completer.complete(true);

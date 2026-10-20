@@ -3,6 +3,7 @@ import '../datasources/remote/trakt_client.dart';
 import '../datasources/remote/tmdb_client.dart';
 import '../datasources/remote/debrid_service.dart';
 import '../datasources/remote/stremio_addon_client.dart';
+import '../datasources/remote/torrent_hash_resolver.dart';
 import '../datasources/remote/torrent_search_client.dart';
 import '../models/show.dart';
 import '../models/stremio_addon.dart';
@@ -443,6 +444,56 @@ class ShowsRepository {
     if (lastError != null) {
       throw Exception(
         'Ningún servicio debrid pudo resolver el enlace: $lastError',
+      );
+    }
+    return null;
+  }
+
+  /// Reabre un release ya conocido por su `infoHash`, sin volver a buscarlo en
+  /// los addons.
+  ///
+  /// Es el camino corto de «seguir con esta fuente»: cuando el debrid tiene el
+  /// torrent, pedirlo por hash evita la búsqueda entera. [fileIdx], [season] y
+  /// [episode] son pistas para elegir el fichero del pack; el servicio que no
+  /// sepa usarlas cae al magnet de siempre.
+  Future<ResolvedStream?> resolveTorrentHash(
+    String infoHash, {
+    int? fileIdx,
+    int? season,
+    int? episode,
+    void Function(String status, int progress)? onProgress,
+  }) async {
+    if (_debridServices.isEmpty) {
+      throw const DebridUnavailableException();
+    }
+    final magnet = magnetForTorrentHash(infoHash);
+    Object? lastError;
+    for (final service in _debridServices) {
+      try {
+        final resolver = service is TorrentHashResolver
+            ? service as TorrentHashResolver
+            : null;
+        final resolved = resolver != null
+            ? await resolver.resolveTorrentHash(
+                infoHash,
+                fileIdx: fileIdx,
+                season: season,
+                episode: episode,
+                onProgress: onProgress,
+              )
+            : await service.resolveFromMagnet(
+                magnet,
+                onProgress: onProgress,
+              );
+        if (resolved != null && resolved.url.isNotEmpty) return resolved;
+      } catch (e) {
+        lastError = e;
+        _log.w('${service.serviceName} could not reopen the release: $e');
+      }
+    }
+    if (lastError != null) {
+      throw Exception(
+        'Ningún servicio debrid pudo reabrir el release: $lastError',
       );
     }
     return null;

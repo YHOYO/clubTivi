@@ -10,13 +10,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 final _log = Logger(printer: SimplePrinter());
 
 /// Keys in SharedPreferences to include in backup.
+///
+/// Ninguna es un secreto: las claves de Trakt/TMDB, los tokens debrid y la
+/// clave de emparejamiento de las TV LG viven en el almacén seguro y no se
+/// exportan. Restaurar deja la configuración intacta y sólo hay que volver a
+/// introducir las credenciales.
 const _backupPrefKeys = [
-  'shows_trakt_client_id',
-  'shows_tmdb_api_key',
-  'shows_debrid_configs',
-  // Se conserva para poder restaurar backups antiguos; al leerlo se migra a
-  // `shows_debrid_configs`.
-  'shows_debrid_tokens',
   'shows_favorites',
   'last_group',
   'last_channel_id',
@@ -27,9 +26,56 @@ const _backupPrefKeys = [
 
 /// Prefix patterns for dynamic keys to back up.
 const _backupPrefPrefixes = [
-  'lg_webos_key_',
   'show_last_season_',
 ];
+
+/// La estructura de debrid sí viaja (orden y habilitado), sin tokens.
+const _debridConfigsKey = 'shows_debrid_configs';
+
+/// Copia de preferencias apta para un backup: nunca lleva credenciales.
+///
+/// Se sanea también el documento de debrid, por si una instalación donde el
+/// almacén seguro no estaba disponible aún conserva tokens dentro: es el
+/// único punto donde un secreto podría colarse en el fichero.
+Map<String, dynamic> collectBackupPreferences(SharedPreferences prefs) {
+  final data = <String, dynamic>{};
+  for (final key in _backupPrefKeys) {
+    final value = prefs.get(key);
+    if (value != null) data[key] = value;
+  }
+  final debrid = prefs.getString(_debridConfigsKey);
+  final sanitized = debrid == null ? null : _stripDebridTokens(debrid);
+  if (sanitized != null) data[_debridConfigsKey] = sanitized;
+
+  for (final allKey in prefs.getKeys()) {
+    for (final prefix in _backupPrefPrefixes) {
+      if (allKey.startsWith(prefix)) {
+        data[allKey] = prefs.get(allKey);
+      }
+    }
+  }
+  return data;
+}
+
+/// Quita los tokens de un documento de debrid conservando el resto.
+/// Devuelve null si no se puede interpretar (mejor no exportarlo a ciegas).
+String? _stripDebridTokens(String raw) {
+  try {
+    final decoded = jsonDecode(raw);
+    final services = decoded is Map ? decoded['services'] : decoded;
+    if (services is! List) return null;
+    return jsonEncode({
+      'version': 3,
+      'services': [
+        for (final entry in services)
+          if (entry is Map && entry['type'] is String)
+            {'type': entry['type'], 'enabled': entry['enabled'] != false},
+      ],
+    });
+  } catch (_) {
+    return null;
+  }
+}
 
 /// Creates and restores `.clubtivi` backup files (ZIP archive) containing
 /// the SQLite database and SharedPreferences snapshot.
@@ -47,21 +93,9 @@ class BackupService {
       _log.i('Backup: added database (${bytes.length} bytes)');
     }
 
-    // 2. SharedPreferences as JSON
+    // 2. SharedPreferences as JSON (sin credenciales)
     final prefs = await SharedPreferences.getInstance();
-    final prefData = <String, dynamic>{};
-    for (final key in _backupPrefKeys) {
-      final value = prefs.get(key);
-      if (value != null) prefData[key] = value;
-    }
-    for (final allKey in prefs.getKeys()) {
-      for (final prefix in _backupPrefPrefixes) {
-        if (allKey.startsWith(prefix)) {
-          prefData[allKey] = prefs.get(allKey);
-        }
-      }
-    }
-    final prefJson = utf8.encode(jsonEncode(prefData));
+    final prefJson = utf8.encode(jsonEncode(collectBackupPreferences(prefs)));
     archive.addFile(ArchiveFile('preferences.json', prefJson.length, prefJson));
 
     // 3. Metadata

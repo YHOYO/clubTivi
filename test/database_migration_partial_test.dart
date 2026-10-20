@@ -49,7 +49,8 @@ void main() {
     final version = await reopened
         .customSelect('PRAGMA user_version')
         .getSingle();
-    expect(version.read<int>('user_version'), 6,
+    // La versión actual del esquema: 7 desde que el VOD estrenó sus tablas.
+    expect(version.read<int>('user_version'), 7,
         reason: 'la migración debe completarse y dejar la base al día');
   });
 }

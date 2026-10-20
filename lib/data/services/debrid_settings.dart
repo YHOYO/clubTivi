@@ -5,17 +5,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../datasources/remote/debrid_service.dart';
+import 'secret_store.dart';
 
 /// Motivo que se muestra en las fuentes que necesitan un servicio debrid.
 const String kDebridRequiredReason = 'Requiere un servicio debrid habilitado';
 
-/// Clave donde vive la configuración actual (JSON versionado).
-const String debridConfigsKey = 'shows_debrid_configs';
+/// Clave donde vive la configuración actual (JSON versionado, sin tokens).
+const String debridConfigsKey = LegacySecretPrefs.debridConfigs;
 
 // Claves heredadas: solo se leen para migrarlas una vez.
-const String _legacyTokensKey = 'shows_debrid_tokens';
-const String _legacyTokenKey = 'shows_debrid_api_token';
-const String _legacyTypeKey = 'shows_debrid_type';
+const String _legacyTokensKey = LegacySecretPrefs.debridTokens;
+const String _legacyTokenKey = LegacySecretPrefs.debridToken;
+const String _legacyTypeKey = LegacySecretPrefs.debridType;
+
+/// Versión del documento que se escribe hoy: los tokens ya no están dentro.
+const int _configVersion = 3;
 
 DebridType? debridTypeFromName(String name) {
   for (final type in DebridType.values) {
@@ -143,12 +147,19 @@ class DebridSettingsNotifier extends StateNotifier<DebridSettings> {
   DebridSettingsNotifier({
     DebridSettings initial = const DebridSettings(),
     SharedPreferences? preferences,
+    SecretStore? secrets,
   })  : _prefs = preferences,
+        _secrets = secrets ?? SecureSecretStore(),
         super(initial);
 
   SharedPreferences? _prefs;
+  final SecretStore _secrets;
   Future<void>? _loading;
   bool _loaded = false;
+
+  /// Falso cuando el almacén seguro falló y los tokens siguen en el formato
+  /// legado. La UI lo muestra en vez de fingir que todo está cifrado.
+  bool storageAvailable = true;
 
   /// True cuando [load] ya leyó (y migró) las preferencias.
   bool get isLoaded => _loaded;
@@ -207,6 +218,11 @@ class DebridSettingsNotifier extends StateNotifier<DebridSettings> {
     await load();
     if (!mounted || state.configFor(type) == null) return;
     await _update(state.services.where((c) => c.type != type).toList());
+    try {
+      await _secrets.delete(SecretKeys.debridToken(type.name));
+    } on SecretStoreUnavailable {
+      storageAvailable = false;
+    }
   }
 
   /// Mueve un servicio dentro del orden de prioridad.
@@ -235,39 +251,81 @@ class DebridSettingsNotifier extends StateNotifier<DebridSettings> {
 
   // --- Lectura, migración y escritura ---
 
-  static Future<DebridSettings> _read(SharedPreferences prefs) async {
-    final raw = prefs.getString(debridConfigsKey);
-    if (raw != null && raw.isNotEmpty) {
-      final decoded = _decode(raw);
-      if (decoded != null) return DebridSettings(services: decoded);
+  /// Lee la configuración y mueve los tokens al almacén seguro.
+  ///
+  /// Idempotente: un documento ya migrado no se reescribe. Si el almacén no
+  /// está disponible se conservan los tokens donde están y se marca
+  /// [storageAvailable] en falso; nunca se escribe un documento sin los tokens
+  /// que aún no se han podido guardar.
+  Future<DebridSettings> _read(SharedPreferences prefs) async {
+    final document = prefs.getString(debridConfigsKey);
+    final entries = (document == null ? null : _decode(document)) ??
+        _legacyEntries(prefs);
+    var available = true;
+    var dirty = document == null;
+    final services = <DebridServiceConfig>[];
+
+    for (final entry in entries) {
+      var token = entry.token;
+      if (token.isNotEmpty) {
+        try {
+          await _secrets.write(SecretKeys.debridToken(entry.type.name), token);
+          dirty = true;
+        } on SecretStoreUnavailable {
+          available = false;
+        }
+      } else {
+        try {
+          token = await _secrets.read(SecretKeys.debridToken(entry.type.name)) ?? '';
+        } on SecretStoreUnavailable {
+          available = false;
+        }
+      }
+      services.add(DebridServiceConfig(
+        type: entry.type,
+        token: token,
+        enabled: entry.enabled,
+      ));
     }
 
-    final migrated = _migrateLegacy(prefs);
-    if (migrated.isEmpty) return const DebridSettings();
-
-    await _write(prefs, migrated);
-    await prefs.remove(_legacyTokensKey);
-    await prefs.remove(_legacyTokenKey);
-    await prefs.remove(_legacyTypeKey);
-    return DebridSettings(services: migrated);
+    storageAvailable = available;
+    if (dirty && available) {
+      await _write(prefs, services);
+      await prefs.remove(_legacyTokensKey);
+      await prefs.remove(_legacyTokenKey);
+      await prefs.remove(_legacyTypeKey);
+    }
+    return DebridSettings(services: services);
   }
 
   /// Acepta tanto el objeto versionado como un array suelto. Devuelve null si
   /// el documento no se puede interpretar, para poder caer a la migración.
-  static List<DebridServiceConfig>? _decode(String raw) {
+  ///
+  /// Un token vacío se acepta: puede ser un backup restaurado, donde la
+  /// estructura (prioridad, habilitado) sí viaja y sólo falta la credencial.
+  static List<_Entry>? _decode(String raw) {
     try {
       final decoded = jsonDecode(raw);
       final list = decoded is Map ? decoded['services'] : decoded;
       if (list is! List) return null;
 
       final seen = <DebridType>{};
-      final configs = <DebridServiceConfig>[];
-      for (final entry in list) {
-        final config = DebridServiceConfig.fromJson(entry);
-        if (config == null || !seen.add(config.type)) continue;
-        configs.add(config);
+      final entries = <_Entry>[];
+      for (final value in list) {
+        if (value is! Map) continue;
+        final typeName = value['type'];
+        if (typeName is! String) continue;
+        final type = debridTypeFromName(typeName);
+        if (type == null || !seen.add(type)) continue;
+        final token = value['token'];
+        final enabled = value['enabled'];
+        entries.add(_Entry(
+          type: type,
+          token: token is String ? token : '',
+          enabled: enabled is bool ? enabled : true,
+        ));
       }
-      return configs;
+      return entries;
     } catch (_) {
       return null;
     }
@@ -276,7 +334,7 @@ class DebridSettingsNotifier extends StateNotifier<DebridSettings> {
   /// Traduce el mapa tipo→token de versiones anteriores y el token único aún
   /// más antiguo. El orden resultante es el del enum: determinista y sin
   /// depender del orden de inserción del JSON.
-  static List<DebridServiceConfig> _migrateLegacy(SharedPreferences prefs) {
+  static List<_Entry> _legacyEntries(SharedPreferences prefs) {
     final tokens = <DebridType, String>{};
 
     final raw = prefs.getString(_legacyTokensKey);
@@ -306,23 +364,54 @@ class DebridSettingsNotifier extends StateNotifier<DebridSettings> {
 
     return [
       for (final type in DebridType.values)
-        if (tokens[type] != null)
-          DebridServiceConfig(type: type, token: tokens[type]!),
+        if (tokens[type] != null) _Entry(type: type, token: tokens[type]!),
     ];
   }
 
-  static Future<void> _write(
+  /// Persiste la estructura sin secretos y los tokens en el almacén.
+  ///
+  /// Si el almacén falla, el documento conserva los tokens (versión 2) para
+  /// no perderlos; es el único camino que deja secretos en preferencias y
+  /// [storageAvailable] queda en falso.
+  Future<void> _write(
     SharedPreferences prefs,
     List<DebridServiceConfig> services,
-  ) {
-    return prefs.setString(
-      debridConfigsKey,
-      jsonEncode({
-        'version': 2,
-        'services': [for (final config in services) config.toJson()],
-      }),
-    );
+  ) async {
+    var available = true;
+    for (final config in services) {
+      if (config.token.isEmpty) continue;
+      try {
+        await _secrets.write(
+          SecretKeys.debridToken(config.type.name),
+          config.token,
+        );
+      } on SecretStoreUnavailable {
+        available = false;
+      }
+    }
+    storageAvailable = available;
+
+    final payload = {
+      'version': available ? _configVersion : 2,
+      'services': [
+        for (final config in services)
+          available
+              ? {'type': config.type.name, 'enabled': config.enabled}
+              : config.toJson(),
+      ],
+    };
+    await prefs.setString(debridConfigsKey, jsonEncode(payload));
   }
+}
+
+/// Una fila leída de preferencias, antes de resolver su token.
+@immutable
+class _Entry {
+  final DebridType type;
+  final String token;
+  final bool enabled;
+
+  const _Entry({required this.type, this.token = '', this.enabled = true});
 }
 
 final debridSettingsProvider =

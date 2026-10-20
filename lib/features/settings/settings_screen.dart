@@ -22,6 +22,7 @@ import '../../data/services/epg_refresh_service.dart';
 import '../providers/provider_manager.dart';
 import '../remote/web_remote_server.dart';
 import 'add_epg_source_dialog.dart';
+import 'secret_storage_warning.dart';
 import '../shows/shows_providers.dart';
 import '../../data/datasources/remote/trakt_client.dart';
 import '../../data/datasources/remote/tmdb_client.dart';
@@ -635,7 +636,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ListTile(
                 leading: const Icon(Icons.upload_rounded),
                 title: const Text('Export Backup'),
-                subtitle: const Text('Save providers, EPG, favorites, API keys'),
+                subtitle: const Text(
+                  'Save providers, EPG and favorites — no API keys or passwords',
+                ),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => _exportBackup(context),
               ),
@@ -1079,6 +1082,8 @@ class _ShowsApiKeysSectionState extends ConsumerState<_ShowsApiKeysSection> {
     return _SettingsSection(
       title: 'Shows & Movies',
       children: [
+        if (!ref.watch(showsApiKeysProvider.notifier).storageAvailable)
+          const SecretStorageWarning(),
         _ApiKeyCard(
           title: 'Trakt',
           subtitle: keys.hasTraktKey ? 'Configured ✓' : 'Not configured',

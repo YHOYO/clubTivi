@@ -2,6 +2,7 @@
 // los episodios al addon y resolver las fuentes con el id propio del título.
 import 'dart:async';
 
+import 'package:clubtivi/data/models/playback_request.dart';
 import 'package:clubtivi/data/models/stremio_addon.dart';
 import 'package:clubtivi/data/models/stream_search_result.dart';
 import 'package:clubtivi/data/models/stream_source.dart';
@@ -211,6 +212,32 @@ void main() {
 
     expect(find.text('PLAYER'), findsOneWidget);
     expect(extra?['httpHeaders'], {'Referer': 'https://a1.mp4upload.com'});
+  });
+
+  testWidgets('el episodio llega al reproductor con la identidad de la ficha',
+      (tester) async {
+    Map<String, dynamic>? extra;
+    await _pump(tester, onPlayerExtra: (value) => extra = value);
+
+    await tester.tap(find.textContaining('To You Two Thousand Years Later'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Direct source'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('PLAYER'), findsOneWidget);
+    final request = extra?['playback'];
+    expect(request, isA<PlaybackRequest>());
+    final playback = request as PlaybackRequest;
+    expect(playback.kind, PlaybackKind.series);
+    expect(
+      playback.mediaKey,
+      'imdb:tt2560140',
+      reason: 'con IMDB la clave coincide con la ficha de Trakt del mismo título',
+    );
+    expect(playback.season, 1);
+    expect(playback.episode, 1);
+    expect(playback.title, 'Attack on Titan S01E01');
+    expect(playback.sourceId, _source.id);
   });
 
   testWidgets('si el addon no publica ficha, se queda con el catálogo',

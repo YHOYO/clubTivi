@@ -1,14 +1,20 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../data/datasources/local/playback_dao.dart';
+import '../../data/models/playback_request.dart';
 import '../../data/models/stremio_addon.dart';
 import '../../data/models/stream_search_result.dart';
 import '../../data/models/stream_source.dart';
 import '../../data/services/debrid_settings.dart';
+import '../../data/services/release_memory.dart';
 import '../player/player_service.dart';
+import '../providers/provider_manager.dart' show databaseProvider;
 import 'await_provider.dart';
 import 'shows_providers.dart';
 import 'stream_picker.dart';
@@ -374,6 +380,9 @@ class _StremioMetaScreenState extends ConsumerState<StremioMetaScreen> {
     // pedir la reproducción, no medio minuto después al abrir el reproductor.
     await ref.read(playerServiceProvider).stop();
     try {
+      // Si este título ya se abrió con un release que funcionó, se reabre por
+      // su hash sin volver a preguntar a los addons.
+      if (await _reopenRemembered(meta, video, title)) return;
       final result = await awaitProviderFuture(
         ref,
         addonStreamsProvider(params),
@@ -387,7 +396,7 @@ class _StremioMetaScreenState extends ConsumerState<StremioMetaScreen> {
         context,
         result: result,
         title: title,
-        onPlay: (stream) => _playSource(stream, title, meta),
+        onPlay: (stream) => _playSource(stream, title, meta, video),
         onDownload: (stream) => _downloadSource(stream, meta),
       );
     } catch (e) {
@@ -401,6 +410,7 @@ class _StremioMetaScreenState extends ConsumerState<StremioMetaScreen> {
     StreamSource stream,
     String title,
     StremioMeta meta,
+    StremioVideo? video,
   ) async {
     try {
       final repo = await ref.read(showsRepositoryProvider.future);
@@ -417,6 +427,12 @@ class _StremioMetaScreenState extends ConsumerState<StremioMetaScreen> {
         return;
       }
       if (!mounted) return;
+      final playback = PlaybackRequest.forStremio(
+        meta: meta,
+        video: video,
+        title: title,
+        sourceId: stream.id,
+      );
       context.push('/player', extra: {
         'streamUrl': url,
         'channelName': title,
@@ -424,7 +440,15 @@ class _StremioMetaScreenState extends ConsumerState<StremioMetaScreen> {
         // Las cabeceras del addon sólo valen para su URL directa: un enlace
         // resuelto por debrid ya no pertenece a ese CDN.
         if (stream.isDirect) 'httpHeaders': stream.headers,
+        'playback': playback,
       });
+      // Se guarda el fichero (hash + índice + calidad), nunca el enlace.
+      if (stream.infoHash != null) {
+        unawaited(
+          ReleaseMemory(dao: PlaybackDao(ref.read(databaseProvider)))
+              .remember(playback, stream),
+        );
+      }
     } on SourceUnavailableException catch (e) {
       _snackbar(e.message);
     } on DebridUnavailableException catch (e) {
@@ -432,6 +456,48 @@ class _StremioMetaScreenState extends ConsumerState<StremioMetaScreen> {
     } catch (e) {
       _snackbar('$e');
     }
+  }
+
+  /// Reabre el release recordado de este título sin abrir el selector.
+  ///
+  /// Devuelve false si no hay memoria utilizable; un fallo del debrid suma en
+  /// `fail_count` y, tras dos, ese release deja de ofrecerse.
+  Future<bool> _reopenRemembered(
+    StremioMeta meta,
+    StremioVideo? video,
+    String title,
+  ) async {
+    // Igual que en la ficha de Trakt: una serie sin episodio elegido no se
+    // reabre, porque el pack no dice qué fichero es.
+    if (meta.isSeries && video == null) return false;
+    final repo = await ref.read(showsRepositoryProvider.future);
+    if (!repo.hasDebrid) return false;
+    final memory = ReleaseMemory(dao: PlaybackDao(ref.read(databaseProvider)));
+    final reopened = await memory.reopen(
+      repo,
+      mediaKey: mediaKeyForStremio(meta),
+      season: video?.season,
+      episode: video?.episode,
+      onProgress: (status, progress) {
+        if (!mounted) return;
+        final label = friendlyDebridStatus(status);
+        _snackbar(progress > 0 ? '$label ($progress%)' : label);
+      },
+    );
+    if (reopened == null || !mounted) return false;
+    final playback = PlaybackRequest.forStremio(
+      meta: meta,
+      video: video,
+      title: title,
+      sourceId: reopened.sourceId,
+    );
+    context.push('/player', extra: {
+      'streamUrl': reopened.url,
+      'channelName': title,
+      'channelLogo': meta.poster ?? '',
+      'playback': playback,
+    });
+    return true;
   }
 
   Future<void> _downloadSource(StreamSource stream, StremioMeta meta) async {

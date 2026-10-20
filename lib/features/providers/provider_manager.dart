@@ -11,6 +11,7 @@ import '../../data/datasources/parsers/m3u_parser.dart';
 import '../../data/datasources/remote/xtream_client.dart';
 import '../../data/models/channel.dart' hide Provider;
 import '../../data/services/epg_refresh_service.dart';
+import '../../data/services/secret_store.dart';
 import '../../data/services/logo_resolver_service.dart';
 import '../../core/feature_gate.dart';
 import 'package:dio/dio.dart';
@@ -18,9 +19,11 @@ import 'package:dio/dio.dart';
 /// Manages IPTV providers: adding, refreshing, channel loading.
 class ProviderManager {
   final db.AppDatabase _db;
+  final SecretStore _secrets;
   final M3uParser _m3uParser = M3uParser();
 
-  ProviderManager(this._db);
+  ProviderManager(this._db, {SecretStore? secrets})
+      : _secrets = secrets ?? SecureSecretStore();
 
   /// Check provider count against tier limit.
   Future<void> _checkProviderLimit() async {
@@ -55,13 +58,15 @@ class ProviderManager {
     required String password,
   }) async {
     await _checkProviderLimit();
+    // La contraseña nunca se guarda en la base: sólo en el almacén seguro.
+    final stored = await _storePassword(id, password);
     await _db.upsertProvider(db.ProvidersCompanion.insert(
       id: id,
       name: name,
       type: 'xtream',
       url: Value(url),
       username: Value(username),
-      password: Value(password),
+      password: Value(stored ? null : password),
     ));
     await refreshProvider(id);
   }
@@ -237,7 +242,7 @@ class ProviderManager {
     final client = XtreamClient(
       baseUrl: provider.url!,
       username: provider.username!,
-      password: provider.password!,
+      password: await _providerPassword(provider),
     );
     try {
       return await client.getLiveStreams(providerId: provider.id);
@@ -246,8 +251,63 @@ class ProviderManager {
     }
   }
 
+  /// Contraseña Xtream de la base (formato legado) o del almacén seguro.
+  ///
+  /// Si viene de la base se mueve al almacén y la fila se limpia; si el
+  /// almacén no está disponible se usa la de la base y **no se borra**, para
+  /// no dejar al proveedor sin poder refrescar.
+  Future<String> _providerPassword(db.Provider provider) async {
+    final legacy = provider.password;
+    if (legacy != null && legacy.isNotEmpty) {
+      if (await _storePassword(provider.id, legacy)) {
+        await _db.clearProviderPassword(provider.id);
+      }
+      return legacy;
+    }
+    try {
+      return await _secrets.read(SecretKeys.providerPassword(provider.id)) ??
+          '';
+    } on SecretStoreUnavailable {
+      return '';
+    }
+  }
+
+  /// Devuelve true si la contraseña quedó guardada de forma segura.
+  Future<bool> _storePassword(String providerId, String password) async {
+    try {
+      await _secrets.write(SecretKeys.providerPassword(providerId), password);
+      return true;
+    } on SecretStoreUnavailable catch (e) {
+      debugPrint(
+        '[Providers] Almacén seguro no disponible ($e): la contraseña del '
+        'proveedor $providerId se queda en la base.',
+      );
+      return false;
+    }
+  }
+
+  /// Mueve al almacén las contraseñas Xtream que quedaron en la base.
+  /// Idempotente: una fila ya limpia no cuesta nada.
+  Future<int> migrateProviderPasswords() async {
+    var migrated = 0;
+    for (final provider in await _db.getAllProviders()) {
+      final legacy = provider.password;
+      if (legacy == null || legacy.isEmpty) continue;
+      if (await _storePassword(provider.id, legacy)) {
+        await _db.clearProviderPassword(provider.id);
+        migrated++;
+      }
+    }
+    return migrated;
+  }
+
   Future<void> deleteProvider(String id) async {
     await _db.deleteProvider(id);
+    try {
+      await _secrets.delete(SecretKeys.providerPassword(id));
+    } on SecretStoreUnavailable {
+      // La fila ya no existe; la clave huérfana no sirve para nada.
+    }
   }
 
   /// Limpia los canales que quedaron de versiones anteriores, cuando borrar un

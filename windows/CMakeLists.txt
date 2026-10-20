@@ -45,6 +45,32 @@ function(APPLY_STANDARD_SETTINGS TARGET)
   target_compile_definitions(${TARGET} PRIVATE "$<$<CONFIG:Debug>:_DEBUG>")
 endfunction()
 
+# ATL headers for plugins that use CString (flutter_secure_storage_windows
+# includes <atlstr.h>). El toolset no añade `atlmfc\include` a la ruta de
+# inclusión aunque el componente esté instalado, así que se busca aquí.
+set(_atl_candidates
+  "${CMAKE_GENERATOR_INSTANCE}/VC/Tools/MSVC/${CMAKE_VS_PLATFORM_TOOLSET_VERSION}/atlmfc/include")
+# `ProgramFiles` puede apuntar a la carpeta de 32 bits según desde dónde se
+# lance el build; `ProgramW6432` siempre es la de 64 bits.
+file(GLOB _atl_globbed
+  "$ENV{ProgramW6432}/Microsoft Visual Studio/*/*/VC/Tools/MSVC/*/atlmfc/include"
+  "$ENV{ProgramFiles}/Microsoft Visual Studio/*/*/VC/Tools/MSVC/*/atlmfc/include")
+list(APPEND _atl_candidates ${_atl_globbed})
+foreach(_atl ${_atl_candidates})
+  if(EXISTS "${_atl}/atlstr.h")
+    message(STATUS "ATL include: ${_atl}")
+    include_directories("${_atl}")
+    # atls.lib vive junto a las cabeceras, en una carpeta por arquitectura.
+    get_filename_component(_atl_root "${_atl}" DIRECTORY)
+    if(CMAKE_GENERATOR_PLATFORM STREQUAL "ARM64")
+      link_directories("${_atl_root}/lib/arm64")
+    else()
+      link_directories("${_atl_root}/lib/x64")
+    endif()
+    break()
+  endif()
+endforeach()
+
 # Flutter library and tool build rules.
 set(FLUTTER_MANAGED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/flutter")
 add_subdirectory(${FLUTTER_MANAGED_DIR})
@@ -62,17 +88,18 @@ include(flutter/generated_plugins.cmake)
 # Support files are copied into place next to the executable, so that it can
 # run in place. This is done instead of making a separate bundle (as on Linux)
 # so that building and running from within Visual Studio will work.
-set(BUILD_BUNDLE_DIR "$<TARGET_FILE_DIR:${BINARY_NAME}>")
+# El bundle va siempre a `runner/<config>`, que es donde Flutter lo busca.
+# No se usa `$<TARGET_FILE_DIR:...>` como prefijo porque CMake cachea el valor
+# sin resolverlo y el instalador acaba apuntando a `C:\Program Files`.
+set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/runner" CACHE PATH "..." FORCE)
 # Make the "install" step default, as it's required to run.
 set(CMAKE_VS_INCLUDE_INSTALL_TO_DEFAULT_BUILD 1)
-if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-  set(CMAKE_INSTALL_PREFIX "${BUILD_BUNDLE_DIR}" CACHE PATH "..." FORCE)
-endif()
 
-set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
-set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
+set(INSTALL_BUNDLE_DIR "${CMAKE_INSTALL_PREFIX}/$<CONFIG>")
+set(INSTALL_BUNDLE_DATA_DIR "${INSTALL_BUNDLE_DIR}/data")
+set(INSTALL_BUNDLE_LIB_DIR "${INSTALL_BUNDLE_DIR}")
 
-install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
+install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${INSTALL_BUNDLE_DIR}"
   COMPONENT Runtime)
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"

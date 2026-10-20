@@ -6,6 +6,7 @@ import 'dart:convert';
 
 import 'package:clubtivi/data/datasources/remote/debrid_service.dart';
 import 'package:clubtivi/data/services/debrid_settings.dart';
+import 'package:clubtivi/data/services/secret_store.dart';
 import 'package:clubtivi/features/settings/debrid_services_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -17,7 +18,10 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  Future<DebridSettingsNotifier> pumpScreen(WidgetTester tester) async {
+  Future<DebridSettingsNotifier> pumpScreen(
+    WidgetTester tester, {
+    SecretStore? secrets,
+  }) async {
     // Mismo camino que la app: se persiste y se lee, no se inyecta estado.
     SharedPreferences.setMockInitialValues({
       debridConfigsKey: jsonEncode({
@@ -28,7 +32,9 @@ void main() {
         ],
       }),
     });
-    final notifier = DebridSettingsNotifier();
+    final notifier = DebridSettingsNotifier(
+      secrets: secrets ?? MemorySecretStore(),
+    );
     await notifier.load();
 
     await tester.pumpWidget(
@@ -100,6 +106,30 @@ void main() {
       find.textContaining('marked unavailable'),
       findsOneWidget,
       reason: 'la app avisa de que las fuentes con debrid no se podrán abrir',
+    );
+  });
+
+  testWidgets('avisa cuando el almacén seguro no está disponible',
+      (tester) async {
+    final notifier = await pumpScreen(
+      tester,
+      secrets: const UnavailableSecretStore(),
+    );
+
+    expect(notifier.storageAvailable, isFalse);
+    expect(
+      find.byKey(const ValueKey('secret-storage-warning')),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Nothing was deleted'),
+      findsOneWidget,
+      reason: 'el aviso dice que no se perdió ninguna credencial',
+    );
+    expect(
+      find.textContaining('Resolving with Real-Debrid'),
+      findsOneWidget,
+      reason: 'la app sigue funcionando con los tokens legados',
     );
   });
 }

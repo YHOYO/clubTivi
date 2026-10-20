@@ -10,15 +10,13 @@ import '../../data/repositories/shows_repository.dart';
 import '../../data/models/show.dart';
 import '../../data/models/stremio_addon.dart';
 import '../../data/models/stream_search_result.dart';
+import '../../data/services/api_key_store.dart';
 import '../../data/services/debrid_settings.dart';
 import '../../data/services/language_preferences_store.dart';
 import '../../data/services/stremio_addon_settings.dart';
 import '../../data/services/stream_ranker.dart';
 import '../../data/services/tmdb_language_store.dart';
 
-// SharedPreferences keys for API credentials
-const _kTraktClientId = 'shows_trakt_client_id';
-const _kTmdbApiKey = 'shows_tmdb_api_key';
 
 /// Cliente compartido del protocolo Stremio: lo usan tanto la búsqueda de
 /// fuentes como la pantalla de instalación, y en tests se sustituye por un
@@ -447,15 +445,23 @@ class AddonStreamParams {
   int get hashCode => Object.hash(addonType, addonId, imdbId, season, episode);
 }
 
-/// API keys configuration state
+/// API keys configuration state. Las credenciales viven en el almacén
+/// seguro; este notifier sólo cachea el estado para la UI.
 class ShowsApiKeysNotifier extends StateNotifier<ShowsApiKeys> {
-  ShowsApiKeysNotifier() : super(const ShowsApiKeys());
+  ShowsApiKeysNotifier({ApiKeyStore? store})
+      : _store = store ?? ApiKeyStore(),
+        super(const ShowsApiKeys());
+
+  final ApiKeyStore _store;
+
+  /// Falso si el almacén seguro falló y las claves siguen en preferencias.
+  bool get storageAvailable => _store.storageAvailable;
 
   Future<void> load() async {
-    final prefs = await SharedPreferences.getInstance();
+    final keys = await _store.load();
     state = ShowsApiKeys(
-      traktClientId: prefs.getString(_kTraktClientId) ?? '',
-      tmdbApiKey: prefs.getString(_kTmdbApiKey) ?? '',
+      traktClientId: keys.traktClientId,
+      tmdbApiKey: keys.tmdbApiKey,
     );
   }
 
@@ -463,10 +469,14 @@ class ShowsApiKeysNotifier extends StateNotifier<ShowsApiKeys> {
     required String traktClientId,
     required String tmdbApiKey,
   }) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kTraktClientId, traktClientId);
-    await prefs.setString(_kTmdbApiKey, tmdbApiKey);
-    state = ShowsApiKeys(traktClientId: traktClientId, tmdbApiKey: tmdbApiKey);
+    await _store.save(
+      traktClientId: traktClientId,
+      tmdbApiKey: tmdbApiKey,
+    );
+    state = ShowsApiKeys(
+      traktClientId: traktClientId.trim(),
+      tmdbApiKey: tmdbApiKey.trim(),
+    );
   }
 }
 

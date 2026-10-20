@@ -15,6 +15,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:clubtivi/data/datasources/local/database.dart' as db;
 import 'package:clubtivi/data/datasources/remote/debrid_client.dart';
 import 'package:clubtivi/data/models/show.dart';
 import 'package:clubtivi/data/models/stream_search_result.dart';
@@ -22,9 +23,12 @@ import 'package:clubtivi/data/models/stream_source.dart';
 import 'package:clubtivi/data/repositories/shows_repository.dart';
 import 'package:clubtivi/features/player/player_screen.dart';
 import 'package:clubtivi/features/player/player_service.dart';
+import 'package:clubtivi/features/providers/provider_manager.dart'
+    show databaseProvider;
 import 'package:clubtivi/features/shows/show_detail_screen.dart';
 import 'package:clubtivi/features/shows/shows_providers.dart';
 import 'package:dio/dio.dart';
+import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -306,6 +310,12 @@ void main() {
         ),
         showsRepositoryProvider.overrideWith(
           (ref) async => ShowsRepository(debridServices: [service]),
+        ),
+        // La ficha ahora consulta la memoria de releases antes de buscar: con
+        // la base del arranque real aquí sería una apertura en frío dentro del
+        // test. Se le da una en memoria, como cualquier otro doble.
+        databaseProvider.overrideWithValue(
+          db.AppDatabase.forTesting(NativeDatabase.memory()),
         ),
       ],
     );

@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../data/datasources/remote/debrid_service.dart';
 import '../../data/services/debrid_settings.dart';
+import 'secret_storage_warning.dart';
 
 /// Sub-screen for managing debrid service API tokens, their on/off state and
 /// the resolution priority. El orden de la lista es la prioridad: el primer
@@ -68,6 +69,10 @@ class _DebridServicesScreenState extends ConsumerState<DebridServicesScreen> {
                   ),
                 ),
               ),
+              if (!ref
+                  .watch(debridSettingsProvider.notifier)
+                  .storageAvailable)
+                const SecretStorageWarning(),
               _buildStatusBanner(settings),
               if (configured.isEmpty)
                 const Padding(

@@ -14,14 +14,18 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/datasources/local/database.dart' as db;
+import '../../data/datasources/local/playback_dao.dart';
+import '../../data/models/playback_request.dart';
 import '../../data/services/channel_probe_service.dart';
 import '../../data/services/stream_alternatives_service.dart';
 import '../../features/providers/provider_manager.dart' show databaseProvider;
 import '../casting/cast_service.dart';
 import '../casting/cast_dialog.dart';
 import '../channels/channel_debug_dialog.dart';
+import 'playback_progress_recorder.dart';
 import 'player_control_bar.dart';
 import 'player_service.dart';
+import 'resume_point.dart';
 import 'stream_info_badges.dart';
 
 /// Full-screen video player with overlay controls and keyboard navigation.
@@ -38,6 +42,10 @@ class PlayerScreen extends ConsumerStatefulWidget {
   /// un VOD las recibe de su addon.
   final Map<String, String> httpHeaders;
 
+  /// Identidad de lo que se reproduce (título, episodio y release elegido).
+  /// Null en un canal en vivo: un canal no tiene progreso que guardar.
+  final PlaybackRequest? playback;
+
   const PlayerScreen({
     super.key,
     required this.streamUrl,
@@ -47,13 +55,41 @@ class PlayerScreen extends ConsumerStatefulWidget {
     this.channels = const [],
     this.currentIndex = 0,
     this.httpHeaders = const {},
+    this.playback,
   });
+
+  /// Reconstruye el reproductor desde el `extra` de `/player`. Un canal en vivo
+  /// llega sin identidad de reproducción; un VOD la trae para poder guardar por
+  /// dónde va.
+  factory PlayerScreen.fromExtra(Object? extra) {
+    final data = extra is Map ? extra : const <String, dynamic>{};
+    final playback = data['playback'];
+    return PlayerScreen(
+      streamUrl: data['streamUrl'] as String? ?? '',
+      channelName: data['channelName'] as String? ?? '',
+      channelLogo: data['channelLogo'] as String?,
+      alternativeUrls: (data['alternativeUrls'] as List<String>?) ?? const [],
+      httpHeaders: Map<String, String>.from(
+        data['httpHeaders'] as Map? ?? const <String, String>{},
+      ),
+      channels:
+          (data['channels'] as List<dynamic>?)?.cast<Map<String, dynamic>>() ??
+          const [],
+      currentIndex: data['currentIndex'] as int? ?? 0,
+      playback: playback is PlaybackRequest ? playback : null,
+    );
+  }
 
   @override
   ConsumerState<PlayerScreen> createState() => _PlayerScreenState();
 }
 
-class _PlayerScreenState extends ConsumerState<PlayerScreen> {
+class _PlayerScreenState extends ConsumerState<PlayerScreen>
+    with WidgetsBindingObserver {
+  /// Grabador del progreso. Null en un canal en vivo: sin identidad no hay
+  /// nada que guardar.
+  PlaybackProgressRecorder? _recorder;
+
   bool _showOverlay = true;
   int _currentUrlIndex = 0;
   bool _showChannelList = false;
@@ -112,6 +148,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _playerService = ref.read(playerServiceProvider);
     _channelIndex = widget.currentIndex;
     _currentChannelName = widget.channelName;
@@ -143,9 +180,62 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       );
     });
     _startPlayback();
+    _startProgressTracking();
     _autoHideOverlay();
     _loadEpgInfo();
     _loadFavoriteState();
+  }
+
+  /// Sigue el progreso de un VOD y reanuda donde se dejó.
+  ///
+  /// Un canal en vivo no lleva `playback` en el extra, así que ni grabador ni
+  /// reanudación: su «posición» no significa nada.
+  void _startProgressTracking() {
+    final playback = widget.playback;
+    if (playback == null) return;
+    final dao = PlaybackDao(ref.read(databaseProvider));
+    _recorder = PlaybackProgressRecorder(
+      dao: dao,
+      request: playback,
+      positions: _playerService.positionStream,
+      durations: _playerService.durationStream,
+      playing: _playerService.playingStream,
+    )..start();
+    unawaited(_resumeSaved(dao, playback));
+  }
+
+  Future<void> _resumeSaved(PlaybackDao dao, PlaybackRequest playback) async {
+    final saved = await dao.progressFor(playback.contentKey);
+    if (saved == null || !mounted) return;
+    // Lo que ya está terminado (o apenas empezado) no gana nada esperando al
+    // primer frame: se sale antes de suscribirse al motor.
+    if (!resumePoint(saved.position, saved.duration).shouldResume) return;
+    try {
+      // Se espera al primer frame —la primera posición que publica el motor—
+      // para que el seek no se pierda en el arranque y para saber cuánto dura
+      // el fichero que se acaba de abrir.
+      await _playerService.positionStream
+          .firstWhere((position) => position > Duration.zero)
+          .timeout(const Duration(seconds: 20));
+    } on TimeoutException {
+      return;
+    }
+    if (!mounted) return;
+    final duration = _playerService.player.state.duration;
+    final resume = resumePoint(
+      saved.position,
+      saved.duration,
+      currentDuration: duration > Duration.zero ? duration : null,
+    );
+    if (!resume.shouldResume) return;
+    await _playerService.player.seek(resume.position);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Un TV box que se apaga por el mando se va a segundo plano sin pasar por
+    // `dispose`: lo último visto se guarda aquí.
+    unawaited(_recorder?.handleLifecycle(state) ?? Future<void>.value());
   }
 
   Future<void> _loadFavoriteState() async {
@@ -664,9 +754,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _overlayTimer?.cancel();
     _playbackErrorSub?.cancel();
     _volumeTimer?.cancel();
+    // El grabador usa la última posición que ya tenía, así que puede escribir
+    // aunque el motor se pare justo después.
+    unawaited(_recorder?.dispose() ?? Future<void>.value());
     // Un VOD no tiene otra superficie donde seguir viéndose: si no se para al
     // salir, su audio se queda sonando detrás de la ficha. El canal en vivo sí
     // tiene la vista previa de Canales, así que ese sigue.

@@ -10,6 +10,7 @@ import 'package:clubtivi/data/models/show.dart';
 import 'package:clubtivi/data/models/stream_source.dart';
 import 'package:clubtivi/data/repositories/shows_repository.dart';
 import 'package:clubtivi/data/services/debrid_settings.dart';
+import 'package:clubtivi/data/services/secret_store.dart';
 import 'package:clubtivi/features/shows/shows_providers.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -259,7 +260,7 @@ void main() {
           ],
         }),
       });
-      final notifier = DebridSettingsNotifier();
+      final notifier = DebridSettingsNotifier(secrets: MemorySecretStore());
       await notifier.load();
       final container = ProviderContainer(
         overrides: [debridSettingsProvider.overrideWith((ref) => notifier)],

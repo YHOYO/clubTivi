@@ -21,6 +21,7 @@ import 'package:dio/dio.dart';
 
 import '../../models/show.dart';
 import 'debrid_service.dart';
+import 'torrent_hash_resolver.dart';
 
 /// Un fallo concreto de AllDebrid: se muestra su mensaje en vez de un
 /// «timeout» genérico que no dice qué pasó.
@@ -180,7 +181,7 @@ class _MagnetSnapshot {
 /// error sin datos, así que el bucle se quedaba girando con un 50 % inventado.
 /// Cuando el magnet está listo los enlaces viven en `files[].l` (o en `links`
 /// en la respuesta antigua) y cada uno se desbloquea con `/v4/link/unlock`.
-class AllDebridService implements DebridService {
+class AllDebridService implements DebridService, TorrentHashResolver {
   final Dio _dio;
   final String apiToken;
 
@@ -311,6 +312,34 @@ class AllDebridService implements DebridService {
   Future<ResolvedStream?> resolveFromMagnet(
     String magnetLink, {
     void Function(String status, int progress)? onProgress,
+  }) =>
+      _resolve(magnetLink, onProgress: onProgress);
+
+  /// Reabre un release ya conocido sin volver a buscarlo: sube el magnet del
+  /// hash y elige el fichero por índice o por el capítulo pedido, para no
+  /// acabar reproduciendo el episodio que el usuario ya vio en un pack.
+  @override
+  Future<ResolvedStream?> resolveTorrentHash(
+    String infoHash, {
+    int? fileIdx,
+    int? season,
+    int? episode,
+    void Function(String status, int progress)? onProgress,
+  }) =>
+      _resolve(
+        magnetForTorrentHash(infoHash),
+        fileIdx: fileIdx,
+        season: season,
+        episode: episode,
+        onProgress: onProgress,
+      );
+
+  Future<ResolvedStream?> _resolve(
+    String magnetLink, {
+    int? fileIdx,
+    int? season,
+    int? episode,
+    void Function(String status, int progress)? onProgress,
   }) async {
     final magnet = await _uploadMagnet(magnetLink);
     final magnetId = '${magnet['id']}';
@@ -350,7 +379,9 @@ class AllDebridService implements DebridService {
         'El magnet terminó sin ficheros reproducibles',
       );
     }
-    return unrestrictLink(_pickPlayable(files).link);
+    return unrestrictLink(
+      _pickFor(files, fileIdx: fileIdx, season: season, episode: episode).link,
+    );
   }
 
   /// Sube el magnet (o reutiliza el que ya exista) y devuelve su objeto, con
@@ -405,6 +436,32 @@ class AllDebridService implements DebridService {
 
   /// El fichero de vídeo más grande: en un pack de temporada el primero del
   /// árbol puede ser un sample o un .nfo.
+  /// Fichero del pack que corresponde.
+  ///
+  /// Primero el que lleva la marca del capítulo pedido: al abrir el episodio
+  /// siguiente el índice recordado apunta al anterior, y usarlo reproduciría el
+  /// capítulo ya visto. Después el índice (mismo capítulo), y si no el mayor.
+  _AllDebridFile _pickFor(
+    List<_AllDebridFile> files, {
+    int? fileIdx,
+    int? season,
+    int? episode,
+  }) {
+    final name = findEpisodeFile(
+      files.where((f) => f.isVideo).map((f) => f.name),
+      season,
+      episode,
+    );
+    if (name != null) {
+      return files.firstWhere((f) => f.name == name);
+    }
+    if (fileIdx != null && fileIdx >= 0 && fileIdx < files.length) {
+      final indexed = files[fileIdx];
+      if (indexed.isVideo) return indexed;
+    }
+    return _pickPlayable(files);
+  }
+
   _AllDebridFile _pickPlayable(List<_AllDebridFile> files) {
     final videos = files.where((f) => f.isVideo).toList();
     final candidates = videos.isEmpty ? files : videos;

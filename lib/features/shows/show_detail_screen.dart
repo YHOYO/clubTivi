@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,12 +8,16 @@ import 'package:go_router/go_router.dart';
 import 'package:palette_generator/palette_generator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../data/datasources/local/playback_dao.dart';
 import '../../data/models/media_video.dart';
+import '../../data/models/playback_request.dart';
 import '../../data/models/show.dart';
 import '../../data/models/stream_search_result.dart';
 import '../../data/models/stream_source.dart';
 import '../../data/services/debrid_settings.dart';
+import '../../data/services/release_memory.dart';
 import '../player/player_service.dart';
+import '../providers/provider_manager.dart' show databaseProvider;
 import 'await_provider.dart';
 import 'shows_providers.dart';
 import 'stream_picker.dart';
@@ -511,6 +517,9 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     // canal antes de resolver, no cuando el reproductor ya está encima.
     await ref.read(playerServiceProvider).stop();
     try {
+      // Antes de buscar en addons: si esta película ya se abrió con un release
+      // que funcionó, se reabre por su hash y se va directo al reproductor.
+      if (await _reopenRemembered(show, null, show.title)) return;
       final result = await awaitProviderFuture(
         ref,
         resolveStreamProvider(StreamResolveParams(show.imdbId!)),
@@ -520,7 +529,7 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
         return;
       }
       if (!mounted) return;
-      _pickStream(result, show.title);
+      _pickStream(result, show.title, show: show);
     } catch (e) {
       _showSnackbar('Stream error: $e');
     } finally {
@@ -542,6 +551,15 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     // episodio, aunque la fuente tarde en resolverse.
     await ref.read(playerServiceProvider).stop();
     try {
+      // Mismo atajo que la película: el release del pack que ya funcionó se
+      // reabre por hash, eligiendo el fichero por índice o por el capítulo.
+      if (await _reopenRemembered(
+        show,
+        episode,
+        '${show.title} ${episode.code}',
+      )) {
+        return;
+      }
       final result = await awaitProviderFuture(
         ref,
         resolveStreamProvider(
@@ -557,7 +575,12 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
         return;
       }
       if (!mounted) return;
-      _pickStream(result, '${show.title} ${episode.code}');
+      _pickStream(
+        result,
+        '${show.title} ${episode.code}',
+        show: show,
+        episode: episode,
+      );
     } catch (e) {
       _showSnackbar('Stream error: $e');
     } finally {
@@ -568,6 +591,50 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
         });
       }
     }
+  }
+
+  /// Reabre el release recordado de este título, si lo hay y el debrid está
+  /// configurado, sin abrir el selector ni buscar en addons.
+  ///
+  /// Devuelve false cuando no hay memoria utilizable (o el debrid ya no sirve
+  /// el release): entonces sigue el camino normal. Un fallo queda apuntado en
+  /// `fail_count` y, tras dos, ese release deja de ofrecerse —la fila no se
+  /// borra.
+  Future<bool> _reopenRemembered(
+    Show show,
+    Episode? episode,
+    String title,
+  ) async {
+    // Una serie sin capítulo concreto no se reabre: dentro de un pack no hay
+    // forma de saber qué fichero toca y se acabaría viendo otro episodio.
+    if (show.type == ShowType.show && episode == null) return false;
+    final repo = await ref.read(showsRepositoryProvider.future);
+    if (!repo.hasDebrid) return false;
+    final memory = ReleaseMemory(dao: PlaybackDao(ref.read(databaseProvider)));
+    final reopened = await memory.reopen(
+      repo,
+      mediaKey: mediaKeyForShow(show),
+      season: episode?.season,
+      episode: episode?.number,
+      onProgress: (status, progress) {
+        if (!mounted) return;
+        final label = friendlyDebridStatus(status);
+        _showSnackbar(
+          progress > 0 ? '$label ($progress%)' : label,
+          duration: const Duration(seconds: 30),
+        );
+      },
+    );
+    if (reopened == null || !mounted) return false;
+    final playback = PlaybackRequest.forShow(
+      show: show,
+      episode: episode,
+      title: title,
+      sourceId: reopened.sourceId,
+    );
+    ScaffoldMessenger.of(context).clearSnackBars();
+    _launchPlayer(reopened.url, title, playback: playback);
+    return true;
   }
 
   /// Sin fuentes, el aviso nombra al proveedor que falló en vez de culpar a
@@ -582,17 +649,31 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
 
   /// Mismo selector que la ficha de un catálogo: las fuentes, sus fallos y el
   /// motivo cuando una no se puede reproducir.
-  void _pickStream(StreamSearchResult result, String title) {
+  ///
+  /// [show] y [episode] viajan hasta el reproductor: sin ellos, al elegir la
+  /// fuente ya no se sabe qué título ni qué capítulo se está abriendo.
+  void _pickStream(
+    StreamSearchResult result,
+    String title, {
+    required Show show,
+    Episode? episode,
+  }) {
     showStreamPicker(
       context,
       result: result,
       title: title,
-      onPlay: (stream) => _resolveAndPlay(stream, title),
+      onPlay: (stream) =>
+          _resolveAndPlay(stream, title, show: show, episode: episode),
       onDownload: (stream) => _resolveAndDownload(stream, title),
     );
   }
 
-  Future<void> _resolveAndPlay(StreamSource stream, String title) async {
+  Future<void> _resolveAndPlay(
+    StreamSource stream,
+    String title, {
+    required Show show,
+    Episode? episode,
+  }) async {
     if (!stream.isDirect && !stream.isAvailable) {
       showUnavailableSourceDialog(context, stream);
       return;
@@ -623,13 +704,27 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
         return;
       }
       if (!mounted) return;
+      final playback = PlaybackRequest.forShow(
+        show: show,
+        episode: episode,
+        title: title,
+        sourceId: stream.id,
+      );
       // Un enlace resuelto por debrid ya no pertenece al CDN del addon, así que
       // sus cabeceras sólo viajan con la URL directa.
       _launchPlayer(
         url,
         title,
         headers: stream.isDirect ? stream.headers : const {},
+        playback: playback,
       );
+      // Se recuerda el fichero, no el enlace: el enlace caduca, el hash no.
+      if (stream.infoHash != null) {
+        unawaited(
+          ReleaseMemory(dao: PlaybackDao(ref.read(databaseProvider)))
+              .remember(playback, stream),
+        );
+      }
     } on SourceUnavailableException catch (e) {
       _showSnackbar(e.message);
     } on DebridUnavailableException catch (e) {
@@ -699,6 +794,7 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     String url,
     String title, {
     Map<String, String> headers = const {},
+    required PlaybackRequest playback,
   }) {
     debugPrint('[Shows] Launching player: url=$url, title=$title');
     if (url.isEmpty) {
@@ -715,6 +811,7 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
         'channelName': title,
         'channelLogo': widget.initialShow?.posterUrl ?? '',
         if (headers.isNotEmpty) 'httpHeaders': headers,
+        'playback': playback,
       },
     );
   }

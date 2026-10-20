@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
 
 import '../../models/epg.dart' show EpgProgrammeSlot;
+import 'playback_schema.dart';
 import 'tables.dart';
 
 part 'database.g.dart';
@@ -38,7 +39,7 @@ class AppDatabase extends _$AppDatabase {
       : super(NativeDatabase.createInBackground(file));
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 7;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -51,7 +52,10 @@ class AppDatabase extends _$AppDatabase {
           await customStatement('PRAGMA journal_mode = WAL;');
           await customStatement('PRAGMA synchronous = NORMAL;');
         },
-        onCreate: (m) => m.createAll(),
+        onCreate: (m) async {
+          await m.createAll();
+          await _createVodTables();
+        },
         onUpgrade: (m, from, to) async {
           if (from < 2) {
             await m.createTable(favoriteLists);
@@ -83,8 +87,21 @@ class AppDatabase extends _$AppDatabase {
               await m.addColumn(channels, channels.httpHeaders);
             }
           }
+          if (from < 7) {
+            // El VOD estrena sus propias tablas. Las trece anteriores no se
+            // tocan: un canal, su EPG y sus favoritos siguen donde estaban.
+            await _createVodTables();
+          }
         },
       );
+
+  /// Las tablas de la versión 7, que no son clases de Drift (ver
+  /// `playback_schema.dart`). Las crea el arranque y las migra `onUpgrade`.
+  Future<void> _createVodTables() async {
+    for (final statement in vodSchemaV7) {
+      await customStatement(statement);
+    }
+  }
 
   // --- Provider queries ---
 
@@ -92,6 +109,11 @@ class AppDatabase extends _$AppDatabase {
 
   Future<void> upsertProvider(ProvidersCompanion entry) =>
       into(providers).insertOnConflictUpdate(entry);
+
+  /// Borra la contraseña de la fila una vez que vive en el almacén seguro.
+  Future<void> clearProviderPassword(String id) =>
+      (update(providers)..where((t) => t.id.equals(id)))
+          .write(const ProvidersCompanion(password: Value(null)));
 
   /// Remove a provider **and everything it contributed**.
   ///

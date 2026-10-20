@@ -5,6 +5,7 @@ import 'dart:async';
 
 import 'package:clubtivi/data/datasources/remote/debrid_service.dart';
 import 'package:clubtivi/data/models/language_preferences.dart';
+import 'package:clubtivi/data/models/playback_request.dart';
 import 'package:clubtivi/data/models/show.dart';
 import 'package:clubtivi/data/models/stream_search_result.dart';
 import 'package:clubtivi/data/models/stream_source.dart';
@@ -243,6 +244,61 @@ void main() {
     expect(extra()!['httpHeaders'], {
       'Referer': 'https://cdn.test/',
     }, reason: 'el reproductor necesita el Referer del CDN');
+  });
+
+  testWidgets('la película llega al reproductor con su identidad', (
+    tester,
+  ) async {
+    final extra = await pumpScreen(tester, const [_directStream]);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Play'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Test.Movie.1080p.m3u8'));
+    await tester.pumpAndSettle();
+
+    final playback = extra()!['playback'];
+    expect(playback, isA<PlaybackRequest>());
+    final request = playback as PlaybackRequest;
+    expect(request.kind, PlaybackKind.movie);
+    expect(request.mediaKey, 'imdb:tt1234567');
+    expect(request.season, isNull);
+    expect(request.episode, isNull);
+    expect(request.title, 'Test Movie');
+    expect(request.sourceId, _directStream.id);
+  });
+
+  testWidgets('un episodio llega al reproductor con temporada y capítulo', (
+    tester,
+  ) async {
+    final extra = await pumpScreen(
+      tester,
+      const [_directStream],
+      show: _series,
+      seasons: const [Season(number: 1, episodeCount: 1)],
+      episodes: const [_episode],
+    );
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.textContaining('FIRST PERIOD'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('FIRST PERIOD'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Test.Movie.1080p.m3u8'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('PLAYER'), findsOneWidget);
+    final request = extra()!['playback'] as PlaybackRequest;
+    expect(request.kind, PlaybackKind.series);
+    expect(request.mediaKey, 'imdb:tt7654321');
+    expect(request.season, 1);
+    expect(request.episode, 1);
+    expect(request.title, 'Carrie S01E01');
+    expect(request.sourceId, _directStream.id);
   });
 
   testWidgets('pulsar Play suelta el canal en vivo antes de resolver', (

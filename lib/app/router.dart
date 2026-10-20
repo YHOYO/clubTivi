@@ -51,24 +51,7 @@ GoRouter createRouter() {
     GoRoute(path: '/splash', builder: (context, state) => const SplashScreen()),
     GoRoute(
       path: '/player',
-      builder: (context, state) {
-        final extra = state.extra as Map<String, dynamic>? ?? {};
-        return PlayerScreen(
-          streamUrl: extra['streamUrl'] as String? ?? '',
-          channelName: extra['channelName'] as String? ?? '',
-          channelLogo: extra['channelLogo'] as String?,
-          alternativeUrls:
-              (extra['alternativeUrls'] as List<String>?) ?? const [],
-          httpHeaders: Map<String, String>.from(
-            extra['httpHeaders'] as Map? ?? const <String, String>{},
-          ),
-          channels:
-              (extra['channels'] as List<dynamic>?)
-                  ?.cast<Map<String, dynamic>>() ??
-              const [],
-          currentIndex: extra['currentIndex'] as int? ?? 0,
-        );
-      },
+      builder: (context, state) => PlayerScreen.fromExtra(state.extra),
     ),
     GoRoute(path: '/shows', builder: (context, state) => const ShowsScreen()),
     GoRoute(
