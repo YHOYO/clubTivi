@@ -1,4 +1,6 @@
 import '../../models/show.dart';
+// Los clientes debrid viven en su propio fichero; este import trae el
+// barrel (Real-Debrid, AllDebrid, Premiumize…) que usa la factoría.
 import 'debrid_client.dart';
 
 /// Supported debrid service types
@@ -13,6 +15,35 @@ enum DebridType {
   final String displayName;
   final String tokenUrl;
   const DebridType(this.displayName, this.tokenUrl);
+}
+
+/// A file within a cached torrent
+class DebridFile {
+  final int id;
+  final String filename;
+  final int filesize;
+
+  const DebridFile({
+    required this.id,
+    required this.filename,
+    required this.filesize,
+  });
+
+  String get quality {
+    final lower = filename.toLowerCase();
+    if (lower.contains('2160p') || lower.contains('4k')) return '4K';
+    if (lower.contains('1080p')) return '1080p';
+    if (lower.contains('720p')) return '720p';
+    if (lower.contains('480p')) return '480p';
+    return 'Unknown';
+  }
+
+  String get filesizeDisplay {
+    final gb = filesize / (1024 * 1024 * 1024);
+    if (gb >= 1) return '${gb.toStringAsFixed(1)} GB';
+    final mb = filesize / (1024 * 1024);
+    return '${mb.toStringAsFixed(0)} MB';
+  }
 }
 
 /// Abstract interface for all debrid services

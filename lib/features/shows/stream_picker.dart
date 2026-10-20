@@ -468,8 +468,11 @@ String friendlyDebridStatus(String status) {
       return 'Processing magnet';
     case 'waiting_files_selection':
       return 'Selecting files';
+    case 'in queue':
     case 'queued':
       return 'Queued';
+    case 'ready':
+      return 'Preparing stream';
     case 'downloading':
       return 'Downloading';
     case 'downloaded':

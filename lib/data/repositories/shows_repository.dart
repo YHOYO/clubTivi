@@ -330,8 +330,9 @@ class ShowsRepository {
     }
 
     // Step 2: Check debrid instant availability. Se prueba en orden de
-    // prioridad y se para en el primer servicio que conteste: no tiene sentido
-    // preguntar a los demás por los mismos hashes.
+    // prioridad y se para en el primer servicio que devuelva algo: un servicio
+    // sin consulta de caché (AllDebrid retiró `/magnet/instant`) contesta vacío
+    // y no debe impedir que el siguiente marque sus hashes.
     Set<String> cachedHashes = {};
     String? cachedSource;
     for (final service in _debridServices) {
@@ -343,7 +344,8 @@ class ShowsRepository {
         ];
         final available = await service.checkInstantAvailability(hashes);
         cachedHashes = available.keys.toSet();
-        if (cachedHashes.isNotEmpty) cachedSource = service.serviceName;
+        if (cachedHashes.isEmpty) continue;
+        cachedSource = service.serviceName;
         break;
       } catch (e) {
         _log.w('${service.serviceName} availability check failed: $e');

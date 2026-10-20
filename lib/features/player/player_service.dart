@@ -20,7 +20,14 @@ class PlayerService {
   final AdaptiveBufferManager _bufferManager = AdaptiveBufferManager();
   bool _isBuffering = false;
   DateTime? _bufferStartTime;
-  StreamSubscription<Tracks>? _tracksSub;
+  /// Vigila que el flujo acabe teniendo audio real. Vive en un temporizador
+  /// porque un VOD remoto grande tarda varios segundos en exponer sus pistas.
+  Timer? _audioCheckTimer;
+
+  /// Cuánto se espera antes de dar por hecho que el flujo no tiene audio. Con
+  /// 3 s bastaba para cortar reproducciones que iban bien (un MKV de 4 GB en
+  /// debrid tarda ~7 s en abrir el contenedor).
+  static const audioProbeWindow = Duration(seconds: 12);
 
   /// Progreso de carga del canal actual. Se apoya en mpv para el búfer y en
   /// el estado de la app para saber si se está reconvirtiendo por ffmpeg.
@@ -71,6 +78,10 @@ class PlayerService {
 
   /// Whether the ffmpeg fallback has already been tried for the current stream.
   bool _formatRetryDone = false;
+
+  /// El proxy se abrió pero no entregó datos y ya se volvió a la URL original.
+  /// Evita un bucle proxy → directo → proxy.
+  bool _proxyFallbackReverted = false;
 
   // ── Warm failover: background pre-buffer player ──
   Player? _warmPlayer;
@@ -248,10 +259,11 @@ class PlayerService {
     _currentVanityName = vanityName;
     _currentOriginalName = originalName;
     _failoverGroupUrls = failoverGroupUrls;
-    _tracksSub?.cancel();
+    _audioCheckTimer?.cancel();
     _failoverCheckTimer?.cancel();
     _disposeWarmPlayer();
     _proxyActive = false;
+    _proxyFallbackReverted = false;
     _playStartedAt = DateTime.now();
     lastError = null;
     _lastErrorAt = null;
@@ -296,6 +308,18 @@ class PlayerService {
         lower.contains('cannot open') ||
         lower.contains('unknown protocol') ||
         lower.contains('no demuxer');
+
+    // El proxy puede no llegar a entregar datos (VOD remoto grande): volver a
+    // la URL original deja el flujo como estaba en vez de darlo por muerto.
+    if (_proxyActive &&
+        !_proxyFallbackReverted &&
+        _currentUrl != null &&
+        (lower.contains('failed to open') ||
+            lower.contains('cannot open'))) {
+      _proxyFallbackReverted = true;
+      unawaited(_reopenDirect(_currentUrl!));
+      return;
+    }
 
     if (unrecognised &&
         !_formatRetryDone &&
@@ -385,27 +409,51 @@ class PlayerService {
     }
   }
 
-  /// Check audio tracks after playback starts; retry through ffmpeg proxy
-  /// if no real audio tracks are detected.
+  /// Comprueba que el flujo tiene audio real, pero sin adelantarse.
+  ///
+  /// mpv sólo expone `auto`/`no` hasta que el demuxer abre el contenedor, y un
+  /// VOD grande servido por debrid tarda varios segundos en hacerlo. Antes se
+  /// miraba una sola vez a los 3 s y se cambiaba a ffmpeg: en un MKV de 4 GB
+  /// eso mataba una reproducción que sólo necesitaba esperar.
   void _scheduleAudioCheck(String originalUrl) {
-    _tracksSub?.cancel();
-    // Give mpv 3 seconds to detect audio tracks before checking
-    _tracksSub = Stream<void>.fromFuture(
-      Future<void>.delayed(const Duration(seconds: 3)),
-    ).asyncMap((_) => player.state.tracks).listen((tracks) {
-      _tracksSub?.cancel();
-      if (_proxyActive || _currentUrl != originalUrl) return;
-
-      final realAudio = tracks.audio.where((a) => a.id != 'auto' && a.id != 'no').length;
-      if (realAudio > 0) {
-        debugPrint('[Player] Audio OK: $realAudio tracks detected');
+    _audioCheckTimer?.cancel();
+    final started = Stopwatch()..start();
+    _audioCheckTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_proxyActive || _currentUrl != originalUrl) {
+        timer.cancel();
         return;
       }
 
-      // No real audio detected — try ffmpeg proxy
-      debugPrint('[Player] No audio tracks after 3s, trying ffmpeg proxy for $originalUrl');
+      final state = player.state;
+      final realAudio = state.tracks.audio
+          .where((a) => a.id != 'auto' && a.id != 'no')
+          .length;
+      // Con pistas reales, o con imagen ya avanzando, no hay nada que arreglar.
+      if (realAudio > 0 || state.position > Duration.zero) {
+        timer.cancel();
+        debugPrint('[Player] Audio OK: $realAudio tracks detected');
+        return;
+      }
+      if (started.elapsed < audioProbeWindow) return;
+
+      timer.cancel();
+      debugPrint(
+        '[Player] No audio tracks after ${audioProbeWindow.inSeconds}s, '
+        'trying ffmpeg proxy for $originalUrl',
+      );
       _retryWithProxy(originalUrl);
     });
+  }
+
+  /// Vuelve a la URL directa cuando el proxy no consiguió abrir el flujo.
+  Future<void> _reopenDirect(String originalUrl) async {
+    debugPrint('[Player] El proxy no abrió el flujo; vuelvo a la URL directa');
+    _proxyActive = false;
+    _formatRetryDone = true;
+    await _streamProxy.stop();
+    if (_currentUrl != originalUrl) return;
+    await player.open(Media(originalUrl));
+    await player.setVolume(_volume);
   }
 
   /// Re-open the stream through the local ffmpeg proxy.
@@ -484,7 +532,7 @@ class PlayerService {
     _disposeWarmPlayer();
     _bufferManager.stop();
     _bufferProgress.stop();
-    _tracksSub?.cancel();
+    _audioCheckTimer?.cancel();
     _errorSub?.cancel();
     // Sin reiniciar la bandera, el siguiente `play()` no volvería a enganchar
     // el tracking de búfer (startBufferTracking sale antes si ya está activo).
@@ -850,7 +898,7 @@ class PlayerService {
     _generation++;
     _bufferManager.stop();
     _bufferProgress.dispose();
-    _tracksSub?.cancel();
+    _audioCheckTimer?.cancel();
     _errorSub?.cancel();
     _errorController.close();
     _bufferTrackSub?.cancel();

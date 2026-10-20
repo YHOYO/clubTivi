@@ -3,7 +3,6 @@
 // con un motivo, en vez de fallar al pulsar. Ahora todo pasa por StreamSource.
 import 'dart:convert';
 
-import 'package:clubtivi/data/datasources/remote/debrid_client.dart';
 import 'package:clubtivi/data/datasources/remote/debrid_service.dart';
 import 'package:clubtivi/data/datasources/remote/torrent_search_client.dart';
 import 'package:clubtivi/data/models/language_preferences.dart';
@@ -170,6 +169,25 @@ void main() {
         4 * 1024 * 1024 * 1024,
         reason: 'enriquecer con debrid no pierde los metadatos',
       );
+    },
+  );
+
+  test(
+    'un servicio sin consulta de caché no tapa al siguiente',
+    () async {
+      // AllDebrid ya no tiene endpoint de disponibilidad: contesta vacío. El
+      // bucle no debe pararse ahí o se perderían los hashes de Real-Debrid.
+      final streams = await sourcesOf(
+        repository(
+          debrid: [
+            _FakeDebrid(name: 'AllDebrid'),
+            _FakeDebrid(name: 'Real-Debrid', cached: {_infoHash.toLowerCase()}),
+          ],
+        ),
+      );
+
+      expect(streams.single.isCached, isTrue);
+      expect(streams.single.cachedBy, 'Real-Debrid');
     },
   );
 

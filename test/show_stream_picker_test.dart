@@ -1,6 +1,9 @@
 // El selector de fuentes es donde se decide si algo se puede ver: una fuente
 // directa debe abrir el reproductor sin depender de debrid, y un torrent sin
 // debrid debe explicar el motivo en vez de fallar.
+import 'dart:async';
+
+import 'package:clubtivi/data/datasources/remote/debrid_service.dart';
 import 'package:clubtivi/data/models/language_preferences.dart';
 import 'package:clubtivi/data/models/show.dart';
 import 'package:clubtivi/data/models/stream_search_result.dart';
@@ -24,6 +27,54 @@ const _movie = Show(
   type: ShowType.movie,
 );
 
+const _series = Show(
+  traktId: 2,
+  imdbId: 'tt7654321',
+  title: 'Carrie',
+  year: 2026,
+  type: ShowType.show,
+);
+
+const _episode = Episode(
+  season: 1,
+  number: 1,
+  title: 'FIRST PERIOD',
+  runtime: 56,
+);
+
+/// Debrid de mentira que resuelve un magnet al instante y avisa del progreso,
+/// para poder recorrer el camino completo hasta el reproductor sin red.
+class _ResolvingDebrid implements DebridService {
+  static const url = 'https://p1.alldebrid.com/dl/1234/carrie-s01e01.mkv';
+
+  int resolves = 0;
+
+  @override
+  String get serviceName => 'AllDebrid';
+
+  @override
+  Future<Map<String, List<DebridFile>>> checkInstantAvailability(
+    List<String> hashes,
+  ) async => {};
+
+  @override
+  Future<ResolvedStream> unrestrictLink(String link) async =>
+      ResolvedStream(url: url, filename: 'carrie.mkv', source: 'alldebrid');
+
+  @override
+  Future<ResolvedStream?> resolveFromMagnet(
+    String magnetLink, {
+    void Function(String status, int progress)? onProgress,
+  }) async {
+    resolves++;
+    onProgress?.call('downloading', 75);
+    return ResolvedStream(url: url, filename: 'carrie.mkv', source: 'alldebrid');
+  }
+
+  @override
+  Future<bool> verifyToken() async => true;
+}
+
 const _directStream = StreamSource(
   id: 'addon:1',
   providerId: 'addon',
@@ -44,6 +95,16 @@ const _torrentStream = StreamSource(
   quality: '1080p',
   magnetUrl: 'magnet:?xt=urn:btih:ABCDEF0123456789ABCDEF0123456789ABCDEF01',
   unavailableReason: kDebridRequiredReason,
+);
+
+const _debridTorrent = StreamSource(
+  id: 'torrentio:abcdef0123456789abcdef0123456789abcdef01:0',
+  providerId: 'torrentio',
+  providerName: 'torrent',
+  kind: SourceKind.torrent,
+  title: 'Test.Movie.1080p.WEB-DL',
+  quality: '1080p',
+  magnetUrl: 'magnet:?xt=urn:btih:ABCDEF0123456789ABCDEF0123456789ABCDEF01',
 );
 
 const _multiStream = StreamSource(
@@ -100,6 +161,11 @@ void main() {
     List<StreamSource> streams, {
     List<StreamProviderFailure> failures = const [],
     PlayerService? playerService,
+    Show show = _movie,
+    List<Season> seasons = const [],
+    List<Episode> episodes = const [],
+    ShowsRepository? repository,
+    Future<StreamSearchResult>? pendingSearch,
   }) async {
     Map<String, dynamic>? playerExtra;
 
@@ -109,7 +175,7 @@ void main() {
         GoRoute(
           path: '/shows/:id',
           builder: (context, state) =>
-              const ShowDetailScreen(traktId: 1, initialShow: _movie),
+              ShowDetailScreen(traktId: 1, initialShow: show),
         ),
         GoRoute(
           path: '/player',
@@ -136,16 +202,18 @@ void main() {
       ProviderScope(
         overrides: [
           showDetailProvider.overrideWith(
-            (ref, params) async => ShowDetail(show: _movie),
+            (ref, params) async => ShowDetail(show: show, seasons: seasons),
           ),
+          episodesProvider.overrideWith((ref, params) async => episodes),
           resolveStreamProvider.overrideWith(
             (ref, params) async =>
+                pendingSearch ??
                 StreamSearchResult(sources: streams, failures: failures),
           ),
           // El selector resuelve una URL directa sin debrid; el repositorio
-          // real solo aporta el resolvedor de magnets y aquí no hace falta.
+          // real sólo aporta el resolvedor de magnets.
           showsRepositoryProvider.overrideWith(
-            (ref) async => ShowsRepository(),
+            (ref) async => repository ?? ShowsRepository(),
           ),
           if (playerService != null)
             playerServiceProvider.overrideWithValue(playerService),
@@ -319,6 +387,71 @@ void main() {
     expect(find.textContaining('MobLand.S01.MULTi'), findsOneWidget);
     expect(find.text('No Spanish sources'), findsNothing);
   });
+
+  testWidgets('pulsar un episodio muestra que se están buscando fuentes', (
+    tester,
+  ) async {
+    final search = Completer<StreamSearchResult>();
+    await pumpScreen(
+      tester,
+      const [],
+      show: _series,
+      seasons: const [Season(number: 1, episodeCount: 1)],
+      episodes: const [_episode],
+      pendingSearch: search.future,
+    );
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.textContaining('FIRST PERIOD'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('FIRST PERIOD'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+
+    await tester.tap(find.textContaining('FIRST PERIOD'));
+    await tester.pump();
+
+    expect(
+      find.byType(CircularProgressIndicator),
+      findsOneWidget,
+      reason: 'el clic debe tener respuesta visible en la fila pulsada',
+    );
+
+    search.complete(const StreamSearchResult(sources: []));
+    await tester.pumpAndSettle();
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.textContaining('No streams found'), findsOneWidget);
+  });
+
+  testWidgets(
+    'un torrent con debrid acaba en el reproductor con la URL desbloqueada',
+    (tester) async {
+      final debrid = _ResolvingDebrid();
+      final extra = await pumpScreen(
+        tester,
+        const [_debridTorrent],
+        repository: ShowsRepository(debridServices: [debrid]),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Play'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Test.Movie.1080p.WEB-DL'));
+      await tester.pumpAndSettle();
+
+      expect(debrid.resolves, 1);
+      expect(find.text('PLAYER'), findsOneWidget);
+      expect(extra()!['streamUrl'], _ResolvingDebrid.url);
+      expect(
+        extra()!['httpHeaders'],
+        isNot(contains('Referer')),
+        reason: 'un enlace debrid no usa las cabeceras del addon',
+      );
+    },
+  );
 
   testWidgets('un addon caído se explica junto a las fuentes que sí llegaron', (
     tester,

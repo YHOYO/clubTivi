@@ -31,6 +31,11 @@ class ShowDetailScreen extends ConsumerStatefulWidget {
 class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
   int? _selectedSeason; // null until initialized
   bool _resolving = false;
+
+  /// Episodio cuyo enlace se está buscando. Se marca la fila pulsada para que
+  /// el clic tenga respuesta visible: antes solo cambiaba el botón Play de las
+  /// películas y, en una serie, pulsar un episodio no mostraba nada.
+  Episode? _pendingEpisode;
   int _lastSeasonCount = 0; // track when seasons change
   final _seasonScrollController = ScrollController();
   Color? _dominantColor; // extracted from backdrop image
@@ -485,7 +490,10 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
           (context, index) => _EpisodeTile(
             episode: episodes[index],
             show: show,
-            onPlay: () => _playEpisode(show, episodes[index]),
+            loading: _pendingEpisode == episodes[index],
+            onPlay: _resolving
+                ? null
+                : () => _playEpisode(show, episodes[index]),
           ),
           childCount: episodes.length,
         ),
@@ -525,7 +533,11 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
       _showSnackbar('No IMDB ID available');
       return;
     }
-    setState(() => _resolving = true);
+    if (_resolving) return;
+    setState(() {
+      _resolving = true;
+      _pendingEpisode = episode;
+    });
     // Igual que al reproducir la película: el canal deja de sonar al pedir el
     // episodio, aunque la fuente tarde en resolverse.
     await ref.read(playerServiceProvider).stop();
@@ -549,7 +561,12 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     } catch (e) {
       _showSnackbar('Stream error: $e');
     } finally {
-      if (mounted) setState(() => _resolving = false);
+      if (mounted) {
+        setState(() {
+          _resolving = false;
+          _pendingEpisode = null;
+        });
+      }
     }
   }
 
@@ -595,7 +612,10 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
         stream,
         onProgress: (label, progress) {
           if (!mounted) return;
-          _showSnackbar(progress > 0 ? '$label ($progress%)' : label);
+          _showSnackbar(
+            progress > 0 ? '$label ($progress%)' : label,
+            duration: const Duration(seconds: 30),
+          );
         },
       );
       if (url == null || url.isEmpty) {
@@ -643,7 +663,10 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
         stream,
         onProgress: (label, progress) {
           if (!mounted) return;
-          _showSnackbar(progress > 0 ? '$label ($progress%)' : label);
+          _showSnackbar(
+            progress > 0 ? '$label ($progress%)' : label,
+            duration: const Duration(seconds: 30),
+          );
         },
       );
       if (url == null || url.isEmpty) {
@@ -682,6 +705,9 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
       _showSnackbar('Stream URL is empty — try another source');
       return;
     }
+    // El aviso de progreso dura 30 s: no debe quedar flotando sobre el vídeo
+    // cuando el enlace ya está resuelto.
+    ScaffoldMessenger.of(context).clearSnackBars();
     context.push(
       '/player',
       extra: {
@@ -693,11 +719,20 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     );
   }
 
-  void _showSnackbar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
+  /// El aviso nuevo sustituye siempre al anterior: el estado del debrid llega
+  /// cada dos segundos (y se queda 30 s), así que encolar dejaría el mensaje
+  /// final —el que explica por qué no hay reproducción— detrás del progreso.
+  void _showSnackbar(
+    String message, {
+    Duration duration = const Duration(seconds: 4),
+  }) {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    messenger.showSnackBar(
       SnackBar(
         content: Text(message),
         backgroundColor: const Color(0xFF1A1A2E),
+        duration: duration,
       ),
     );
   }
@@ -801,12 +836,17 @@ class _VideoTile extends StatelessWidget {
 class _EpisodeTile extends StatelessWidget {
   final Episode episode;
   final Show show;
-  final VoidCallback onPlay;
+  final VoidCallback? onPlay;
+
+  /// Mientras se buscan las fuentes de este episodio la fila lo dice con un
+  /// spinner en lugar del icono de play.
+  final bool loading;
 
   const _EpisodeTile({
     required this.episode,
     required this.show,
     required this.onPlay,
+    this.loading = false,
   });
 
   @override
@@ -873,12 +913,25 @@ class _EpisodeTile extends StatelessWidget {
                 ],
               ),
             ),
-            // Play icon
-            const Icon(
-              Icons.play_circle_outline,
-              color: Color(0xFF6C5CE7),
-              size: 32,
-            ),
+            // Play icon (spinner while the streams are being searched)
+            if (loading)
+              const SizedBox(
+                width: 32,
+                height: 32,
+                child: Padding(
+                  padding: EdgeInsets.all(6),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Color(0xFF6C5CE7),
+                  ),
+                ),
+              )
+            else
+              const Icon(
+                Icons.play_circle_outline,
+                color: Color(0xFF6C5CE7),
+                size: 32,
+              ),
           ],
         ),
       ),
