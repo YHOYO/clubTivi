@@ -13,6 +13,7 @@ import '../../data/models/stream_search_result.dart';
 import '../../data/services/api_key_store.dart';
 import '../../data/services/debrid_settings.dart';
 import '../../data/services/language_preferences_store.dart';
+import '../../data/services/secret_store_provider.dart';
 import '../../data/services/stremio_addon_settings.dart';
 import '../../data/services/stream_ranker.dart';
 import '../../data/services/tmdb_language_store.dart';
@@ -453,12 +454,18 @@ class ShowsApiKeysNotifier extends StateNotifier<ShowsApiKeys> {
         super(const ShowsApiKeys());
 
   final ApiKeyStore _store;
+  Future<void>? _loading;
 
   /// Falso si el almacén seguro falló y las claves siguen en preferencias.
   bool get storageAvailable => _store.storageAvailable;
 
-  Future<void> load() async {
+  /// Lectura perezosa y compartida: el arranque y el primer `build` de la UI
+  /// esperan la misma migración en vez de leer preferencias dos veces.
+  Future<void> load() => _loading ??= _load();
+
+  Future<void> _load() async {
     final keys = await _store.load();
+    if (!mounted) return;
     state = ShowsApiKeys(
       traktClientId: keys.traktClientId,
       tmdbApiKey: keys.tmdbApiKey,
@@ -494,7 +501,9 @@ class ShowsApiKeys {
 
 final showsApiKeysProvider =
     StateNotifierProvider<ShowsApiKeysNotifier, ShowsApiKeys>((ref) {
-      final notifier = ShowsApiKeysNotifier();
+      final notifier = ShowsApiKeysNotifier(
+        store: ApiKeyStore(secrets: ref.watch(secretStoreProvider)),
+      );
       notifier.load();
       return notifier;
     });

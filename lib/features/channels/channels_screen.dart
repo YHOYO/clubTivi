@@ -209,13 +209,6 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
       debugPrint('[Channels] Could not purge orphan channels: $e');
       return 0;
     });
-    // Contraseñas Xtream que aún estén en la base: al almacén seguro.
-    ref.read(providerManagerProvider).migrateProviderPasswords().catchError((
-      Object e,
-    ) {
-      debugPrint('[Channels] Could not migrate provider passwords: $e');
-      return 0;
-    });
     _ensureEpgSources();
     _startTopBarFade();
     _initFailoverListener();

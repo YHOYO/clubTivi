@@ -12,6 +12,7 @@ import '../../data/datasources/remote/xtream_client.dart';
 import '../../data/models/channel.dart' hide Provider;
 import '../../data/services/epg_refresh_service.dart';
 import '../../data/services/secret_store.dart';
+import '../../data/services/secret_store_provider.dart';
 import '../../data/services/logo_resolver_service.dart';
 import '../../core/feature_gate.dart';
 import 'package:dio/dio.dart';
@@ -509,5 +510,8 @@ final databaseProvider = Provider<db.AppDatabase>((ref) {
 
 /// Riverpod provider for the provider manager.
 final providerManagerProvider = Provider<ProviderManager>((ref) {
-  return ProviderManager(ref.watch(databaseProvider));
+  return ProviderManager(
+    ref.watch(databaseProvider),
+    secrets: ref.watch(secretStoreProvider),
+  );
 });

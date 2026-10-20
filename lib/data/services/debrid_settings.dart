@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../datasources/remote/debrid_service.dart';
 import 'secret_store.dart';
+import 'secret_store_provider.dart';
 
 /// Motivo que se muestra en las fuentes que necesitan un servicio debrid.
 const String kDebridRequiredReason = 'Requiere un servicio debrid habilitado';
@@ -289,13 +290,42 @@ class DebridSettingsNotifier extends StateNotifier<DebridSettings> {
     }
 
     storageAvailable = available;
-    if (dirty && available) {
+    // Con la configuración vacía no se escribe nada: una instalación nueva no
+    // necesita un documento de debrid, y el arranque no debe crear claves.
+    if (dirty && available && services.isNotEmpty) {
       await _write(prefs, services);
       await prefs.remove(_legacyTokensKey);
       await prefs.remove(_legacyTokenKey);
       await prefs.remove(_legacyTypeKey);
     }
+    if (available && document != null) {
+      await _dropRedundantLegacy(prefs, services);
+    }
     return DebridSettings(services: services);
+  }
+
+  /// Retira un mapa viejo que sobrevivió a una migración interrumpida (el
+  /// documento se escribió, el borrado no). Sólo si todos sus tipos siguen
+  /// configurados: si alguno no lo está, puede ser la única copia de esa
+  /// credencial y se conserva.
+  static Future<void> _dropRedundantLegacy(
+    SharedPreferences prefs,
+    List<DebridServiceConfig> services,
+  ) async {
+    if (!prefs.containsKey(_legacyTokensKey) &&
+        !prefs.containsKey(_legacyTokenKey)) {
+      return;
+    }
+    final configured = {
+      for (final config in services)
+        if (config.token.isNotEmpty) config.type,
+    };
+    if (_legacyEntries(prefs).any((entry) => !configured.contains(entry.type))) {
+      return;
+    }
+    await prefs.remove(_legacyTokensKey);
+    await prefs.remove(_legacyTokenKey);
+    await prefs.remove(_legacyTypeKey);
   }
 
   /// Acepta tanto el objeto versionado como un array suelto. Devuelve null si
@@ -416,7 +446,9 @@ class _Entry {
 
 final debridSettingsProvider =
     StateNotifierProvider<DebridSettingsNotifier, DebridSettings>((ref) {
-  final notifier = DebridSettingsNotifier();
+  final notifier = DebridSettingsNotifier(
+    secrets: ref.watch(secretStoreProvider),
+  );
   notifier.load();
   return notifier;
 });

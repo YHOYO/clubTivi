@@ -146,6 +146,9 @@ Future<MigrationResult> migratePrefSecret({
       return MigrationResult(value: stored, migrated: legacy != null);
     }
     if (legacy == null || legacy.isEmpty) {
+      // Una clave vacía no es un secreto: se retira para que las preferencias
+      // no conserven rastros del formato viejo.
+      if (legacy != null) await prefs.remove(prefKey);
       return const MigrationResult(value: '');
     }
     await store.write(secretKey, legacy);
@@ -158,6 +161,34 @@ Future<MigrationResult> migratePrefSecret({
     );
     return MigrationResult(value: legacy ?? '', usedLegacy: true);
   }
+}
+
+/// Mueve al almacén todas las claves de emparejamiento de TV LG.
+///
+/// Las TV se emparejan una a una, así que el arranque no sabe qué hosts hay:
+/// se recorre el prefijo. Idempotente: un host ya migrado no deja preferencia
+/// y no se vuelve a tocar.
+Future<int> migrateWebOsKeys({
+  required SharedPreferences prefs,
+  required SecretStore store,
+}) async {
+  var migrated = 0;
+  final keys = prefs
+      .getKeys()
+      .where((key) => key.startsWith(LegacySecretPrefs.webosPrefix))
+      .toList();
+  for (final key in keys) {
+    final host = key.substring(LegacySecretPrefs.webosPrefix.length);
+    if (host.isEmpty) continue;
+    final result = await migratePrefSecret(
+      prefs: prefs,
+      store: store,
+      prefKey: key,
+      secretKey: SecretKeys.webosClientKey(host),
+    );
+    if (result.migrated) migrated++;
+  }
+  return migrated;
 }
 
 /// Guarda un secreto (vacío = borrarlo) y retira la copia legada.
