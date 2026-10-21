@@ -250,6 +250,25 @@ class PlaybackDao {
     return rows.isEmpty ? null : _sourceFromRow(rows.single);
   }
 
+  /// Olvida un título: su progreso, los releases recordados y sus metadatos.
+  ///
+  /// Es la acción explícita del usuario («quitar de continuar viendo»), la
+  /// única que borra filas; un fallo del debrid sólo suma en `fail_count`.
+  Future<void> forget(String mediaKey) => _db.transaction(() async {
+    await _db.customUpdate(
+      'DELETE FROM playback_progress WHERE media_key = ?',
+      variables: [Variable(mediaKey)],
+    );
+    await _db.customUpdate(
+      'DELETE FROM playback_sources WHERE media_key = ?',
+      variables: [Variable(mediaKey)],
+    );
+    await _db.customUpdate(
+      'DELETE FROM media_titles WHERE media_key = ?',
+      variables: [Variable(mediaKey)],
+    );
+  });
+
   /// Suma un fallo al release. Nunca borra la fila: un fallo puede ser el
   /// servidor del debrid o un enlace caído, y el usuario aún puede elegirlo.
   Future<void> markSourceFailed(String mediaKey, String sourceId) =>

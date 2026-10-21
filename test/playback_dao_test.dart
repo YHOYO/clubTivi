@@ -225,4 +225,35 @@ void main() {
       reason: 'elegirlo otra vez significa que acaba de funcionar',
     );
   });
+
+  test('olvidar un título borra su progreso, su release y sus metadatos',
+      () async {
+    await dao.saveProgress(
+      _episode2,
+      position: const Duration(minutes: 12),
+      duration: const Duration(minutes: 45),
+      mediaTitle: 'Carrie',
+    );
+    await dao.recordSource(
+      _episode2,
+      providerId: 'torrentio',
+      infoHash: 'ABCDEF',
+    );
+    await dao.saveProgress(
+      _movie,
+      position: const Duration(minutes: 5),
+      duration: const Duration(hours: 2),
+    );
+
+    await dao.forget(_episode2.mediaKey);
+
+    expect(await dao.progressFor(_episode2.contentKey), isNull);
+    expect(await dao.rememberedSource(_episode2.mediaKey), isNull);
+    expect(
+      await dao.recentlyWatched(),
+      hasLength(1),
+      reason: 'la película no se toca: sólo se olvida lo pedido',
+    );
+    expect(await count('media_titles'), 1);
+  });
 }

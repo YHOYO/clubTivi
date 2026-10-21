@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../data/models/show.dart';
 import '../../data/models/stremio_addon.dart';
 import '../../data/services/tmdb_language_store.dart';
+import 'continue_watching_rail.dart';
 import 'shows_providers.dart';
 
 /// Main shows screen with poster grid organized by category
@@ -65,6 +66,8 @@ class _ShowsScreenState extends ConsumerState<ShowsScreen> {
             _buildHeader(context),
             if (_isSearching) _buildSearchBar(),
             _buildCategoryTabs(),
+            // Lo último visto, encima de los catálogos. Vacío no ocupa nada.
+            if (!_isSearching) const ContinueWatchingRail(),
             Expanded(child: _buildContent()),
           ],
         ),
