@@ -46,6 +46,11 @@ class PlayerScreen extends ConsumerStatefulWidget {
   /// Null en un canal en vivo: un canal no tiene progreso que guardar.
   final PlaybackRequest? playback;
 
+  /// Título limpio del VOD, sin el código del capítulo. Null en un canal en
+  /// vivo o cuando el origen no lo manda; entonces el progreso usa el de
+  /// [playback].
+  final String? mediaTitle;
+
   const PlayerScreen({
     super.key,
     required this.streamUrl,
@@ -56,6 +61,7 @@ class PlayerScreen extends ConsumerStatefulWidget {
     this.currentIndex = 0,
     this.httpHeaders = const {},
     this.playback,
+    this.mediaTitle,
   });
 
   /// Reconstruye el reproductor desde el `extra` de `/player`. Un canal en vivo
@@ -77,6 +83,7 @@ class PlayerScreen extends ConsumerStatefulWidget {
           const [],
       currentIndex: data['currentIndex'] as int? ?? 0,
       playback: playback is PlaybackRequest ? playback : null,
+      mediaTitle: data['mediaTitle'] as String?,
     );
   }
 
@@ -200,6 +207,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       positions: _playerService.positionStream,
       durations: _playerService.durationStream,
       playing: _playerService.playingStream,
+      // Sin carátula, la fila de «continuar viendo» sólo puede mostrar un
+      // marcador; la que trajo el origen se guarda con el progreso.
+      mediaTitle: widget.mediaTitle,
+      mediaPoster: widget.channelLogo,
     )..start();
     unawaited(_resumeSaved(dao, playback));
   }

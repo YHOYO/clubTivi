@@ -226,6 +226,54 @@ void main() {
     );
   });
 
+  test('la carátula viaja con el progreso y no se borra si luego falta',
+      () async {
+    await dao.saveProgress(
+      _episode2,
+      position: const Duration(minutes: 12),
+      duration: const Duration(minutes: 45),
+      mediaTitle: 'Carrie',
+      mediaPoster: 'https://img.test/carrie.jpg',
+    );
+
+    var watched = await dao.recentlyWatched();
+    expect(watched.single.media.posterUrl, 'https://img.test/carrie.jpg');
+
+    await dao.saveProgress(
+      _episode2,
+      position: const Duration(minutes: 20),
+      duration: const Duration(minutes: 45),
+      mediaTitle: 'Carrie',
+      mediaPoster: '',
+    );
+
+    watched = await dao.recentlyWatched();
+    expect(
+      watched.single.media.posterUrl,
+      'https://img.test/carrie.jpg',
+      reason: 'una carátula vacía no es un valor: no la sustituye',
+    );
+  });
+
+  test('el release recordado también deja la carátula del título', () async {
+    await dao.recordSource(
+      _episode2,
+      providerId: 'torrentio',
+      infoHash: 'ABCDEF',
+      posterUrl: 'https://img.test/carrie.jpg',
+    );
+    // El progreso llega después, sin carátula: la del release se conserva.
+    await dao.saveProgress(
+      _episode2,
+      position: const Duration(minutes: 12),
+      duration: const Duration(minutes: 45),
+      mediaTitle: 'Carrie',
+    );
+
+    final watched = await dao.recentlyWatched();
+    expect(watched.single.media.posterUrl, 'https://img.test/carrie.jpg');
+  });
+
   test('olvidar un título borra su progreso, su release y sus metadatos',
       () async {
     await dao.saveProgress(

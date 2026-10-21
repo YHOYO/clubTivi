@@ -43,7 +43,14 @@ class ReleaseMemory {
       );
 
   /// Recuerda con qué release se abrió [request].
-  Future<void> remember(PlaybackRequest request, StreamSource stream) {
+  ///
+  /// [posterUrl] viaja con la fila para que «continuar viendo» tenga carátula
+  /// desde el primer minuto, no sólo cuando el grabador escriba progreso.
+  Future<void> remember(
+    PlaybackRequest request,
+    StreamSource stream, {
+    String? posterUrl,
+  }) {
     return dao.recordSource(
       request,
       sourceId: sourceIdFor(stream),
@@ -52,6 +59,7 @@ class ReleaseMemory {
       fileIdx: stream.fileIdx,
       quality: stream.quality,
       sizeBytes: stream.sizeBytes,
+      posterUrl: posterUrl,
     );
   }
 

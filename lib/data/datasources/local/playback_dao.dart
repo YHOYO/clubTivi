@@ -104,17 +104,27 @@ class PlaybackDao {
   /// [mediaTitle] es el nombre del título sin el código de episodio (la ficha
   /// pasa «Carrie», no «Carrie S01E02»). Si se omite se usa `request.title`,
   /// que para un capítulo lleva el sufijo.
+  ///
+  /// [mediaPoster] es la carátula que ya tenía el reproductor. Se guarda para
+  /// que «continuar viendo» muestre arte real en vez de un marcador; omitirla
+  /// (o mandarla vacía) nunca borra la que ya hubiera.
   Future<void> saveProgress(
     PlaybackRequest request, {
     required Duration position,
     required Duration duration,
     bool completed = false,
     String? mediaTitle,
+    String? mediaPoster,
     DateTime? at,
   }) {
     final when = at ?? DateTime.now();
     return _db.transaction(() async {
-      await _rememberMedia(request, when, title: mediaTitle);
+      await _rememberMedia(
+        request,
+        when,
+        title: mediaTitle,
+        posterUrl: mediaPoster,
+      );
       await _db.customInsert(
         'INSERT INTO playback_progress '
         '(content_key, media_key, season, episode, position_ms, duration_ms, '
@@ -193,12 +203,13 @@ class PlaybackDao {
     int? fileIdx,
     String? quality,
     int? sizeBytes,
+    String? posterUrl,
     DateTime? at,
   }) {
     final when = at ?? DateTime.now();
     final id = sourceId ?? request.sourceId;
     return _db.transaction(() async {
-      await _rememberMedia(request, when);
+      await _rememberMedia(request, when, posterUrl: posterUrl);
       await _db.customInsert(
         'INSERT INTO playback_sources '
         '(media_key, source_id, provider_id, info_hash, file_idx, quality, '
@@ -281,20 +292,24 @@ class PlaybackDao {
   /// El título debe existir antes que su progreso o su release.
   ///
   /// `DO NOTHING` para no reescribir con «Carrie S01E01» un nombre limpio que
-  /// ya estaba guardado; el título sólo se sustituye cuando llega uno
-  /// explícito.
+  /// ya estaba guardado; el título (y la carátula) sólo se sustituyen cuando
+  /// llega un valor explícito. Una carátula vacía no es un valor: no borra la
+  /// que ya se conocía.
   Future<void> _rememberMedia(
     PlaybackRequest request,
     DateTime when, {
     String? title,
+    String? posterUrl,
   }) async {
+    final poster = posterUrl != null && posterUrl.isNotEmpty ? posterUrl : null;
     await _db.customInsert(
-      'INSERT INTO media_titles (media_key, kind, title, updated_at) '
-      'VALUES (?, ?, ?, ?) ON CONFLICT(media_key) DO NOTHING',
+      'INSERT INTO media_titles (media_key, kind, title, poster_url, updated_at) '
+      'VALUES (?, ?, ?, ?, ?) ON CONFLICT(media_key) DO NOTHING',
       variables: [
         Variable(request.mediaKey),
         Variable(request.kind.name),
         Variable(title ?? request.title),
+        Variable(poster),
         Variable(when.millisecondsSinceEpoch),
       ],
     );
@@ -306,6 +321,12 @@ class PlaybackDao {
           Variable(when.millisecondsSinceEpoch),
           Variable(request.mediaKey),
         ],
+      );
+    }
+    if (poster != null) {
+      await _db.customUpdate(
+        'UPDATE media_titles SET poster_url = ? WHERE media_key = ?',
+        variables: [Variable(poster), Variable(request.mediaKey)],
       );
     }
   }

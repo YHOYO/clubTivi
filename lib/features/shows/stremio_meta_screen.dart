@@ -437,6 +437,9 @@ class _StremioMetaScreenState extends ConsumerState<StremioMetaScreen> {
         'streamUrl': url,
         'channelName': title,
         'channelLogo': meta.poster ?? '',
+        // Título sin el código del capítulo, para la fila de «continuar
+        // viendo»: la carátula y el nombre se guardan con el progreso.
+        'mediaTitle': meta.name,
         // Las cabeceras del addon sólo valen para su URL directa: un enlace
         // resuelto por debrid ya no pertenece a ese CDN.
         if (stream.isDirect) 'httpHeaders': stream.headers,
@@ -445,8 +448,11 @@ class _StremioMetaScreenState extends ConsumerState<StremioMetaScreen> {
       // Se guarda el fichero (hash + índice + calidad), nunca el enlace.
       if (stream.infoHash != null) {
         unawaited(
-          ReleaseMemory(dao: PlaybackDao(ref.read(databaseProvider)))
-              .remember(playback, stream),
+          ReleaseMemory(dao: PlaybackDao(ref.read(databaseProvider))).remember(
+            playback,
+            stream,
+            posterUrl: meta.poster,
+          ),
         );
       }
     } on SourceUnavailableException catch (e) {
@@ -495,6 +501,7 @@ class _StremioMetaScreenState extends ConsumerState<StremioMetaScreen> {
       'streamUrl': reopened.url,
       'channelName': title,
       'channelLogo': meta.poster ?? '',
+      'mediaTitle': meta.name,
       'playback': playback,
     });
     return true;

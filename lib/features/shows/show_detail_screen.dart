@@ -633,7 +633,13 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
       sourceId: reopened.sourceId,
     );
     ScaffoldMessenger.of(context).clearSnackBars();
-    _launchPlayer(reopened.url, title, playback: playback);
+    _launchPlayer(
+      reopened.url,
+      title,
+      playback: playback,
+      posterUrl: show.posterUrl,
+      mediaTitle: show.title,
+    );
     return true;
   }
 
@@ -717,12 +723,17 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
         title,
         headers: stream.isDirect ? stream.headers : const {},
         playback: playback,
+        posterUrl: show.posterUrl,
+        mediaTitle: show.title,
       );
       // Se recuerda el fichero, no el enlace: el enlace caduca, el hash no.
       if (stream.infoHash != null) {
         unawaited(
-          ReleaseMemory(dao: PlaybackDao(ref.read(databaseProvider)))
-              .remember(playback, stream),
+          ReleaseMemory(dao: PlaybackDao(ref.read(databaseProvider))).remember(
+            playback,
+            stream,
+            posterUrl: show.posterUrl,
+          ),
         );
       }
     } on SourceUnavailableException catch (e) {
@@ -795,6 +806,8 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
     String title, {
     Map<String, String> headers = const {},
     required PlaybackRequest playback,
+    String? posterUrl,
+    String? mediaTitle,
   }) {
     debugPrint('[Shows] Launching player: url=$url, title=$title');
     if (url.isEmpty) {
@@ -809,7 +822,10 @@ class _ShowDetailScreenState extends ConsumerState<ShowDetailScreen> {
       extra: {
         'streamUrl': url,
         'channelName': title,
-        'channelLogo': widget.initialShow?.posterUrl ?? '',
+        'channelLogo': posterUrl ?? widget.initialShow?.posterUrl ?? '',
+        // El título limpio, sin «S01E02»: el reproductor lo usa para guardar el
+        // progreso y la fila de «continuar viendo» no repite el código.
+        'mediaTitle': ?mediaTitle,
         if (headers.isNotEmpty) 'httpHeaders': headers,
         'playback': playback,
       },

@@ -52,7 +52,7 @@ void main() {
     await database.close();
   });
 
-  void build({String? mediaTitle}) {
+  void build({String? mediaTitle, String? mediaPoster}) {
     recorder = PlaybackProgressRecorder(
       dao: dao,
       request: _episode,
@@ -60,6 +60,7 @@ void main() {
       durations: durations.stream,
       playing: playing.stream,
       mediaTitle: mediaTitle,
+      mediaPoster: mediaPoster,
       now: () => clock.now,
     )..start();
   }
@@ -95,6 +96,24 @@ void main() {
       const Duration(minutes: 1, seconds: 10),
       reason: 'se queda con la última escritura, no con cada tick',
     );
+  });
+
+  test('guarda título limpio y carátula para «continuar viendo»', () async {
+    build(
+      mediaTitle: 'Carrie',
+      mediaPoster: 'https://img.test/carrie.jpg',
+    );
+    durations.add(const Duration(minutes: 45));
+    playing.add(true);
+    positions.add(const Duration(minutes: 12));
+    await pumpEventQueue();
+
+    playing.add(false);
+    await pumpEventQueue();
+
+    final watched = await dao.recentlyWatched();
+    expect(watched.single.media.title, 'Carrie');
+    expect(watched.single.media.posterUrl, 'https://img.test/carrie.jpg');
   });
 
   test('pausar escribe en el acto', () async {

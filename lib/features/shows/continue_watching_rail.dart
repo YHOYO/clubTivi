@@ -117,6 +117,9 @@ class ContinueWatchingRail extends ConsumerWidget {
         'streamUrl': reopened.url,
         'channelName': item.media.title,
         'channelLogo': item.media.posterUrl ?? '',
+        // La fila ya guarda el título sin el código del capítulo; el
+        // reproductor lo conserva al volver a escribir el progreso.
+        'mediaTitle': item.media.title,
         'playback': playback,
       },
     );
@@ -151,6 +154,23 @@ class ContinueWatchingRail extends ConsumerWidget {
     if (confirmed != true || !context.mounted) return;
     await PlaybackDao(ref.read(databaseProvider)).forget(item.media.mediaKey);
     ref.invalidate(recentlyWatchedProvider);
+  }
+}
+
+/// Lo que se ve cuando no hay carátula (o cuando la guardada ya no carga).
+class _PosterPlaceholder extends StatelessWidget {
+  const _PosterPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: const Color(0xFF1B1B33),
+      child: const Icon(
+        Icons.play_circle_outline,
+        color: Colors.white38,
+        size: 32,
+      ),
+    );
   }
 }
 
@@ -192,15 +212,15 @@ class _ContinueCard extends StatelessWidget {
                     width: 132,
                     height: 92,
                     child: poster == null || poster.isEmpty
-                        ? Container(
-                            color: const Color(0xFF1B1B33),
-                            child: const Icon(
-                              Icons.play_circle_outline,
-                              color: Colors.white38,
-                              size: 32,
-                            ),
-                          )
-                        : Image.network(poster, fit: BoxFit.cover),
+                        ? const _PosterPlaceholder()
+                        : Image.network(
+                            poster,
+                            fit: BoxFit.cover,
+                            // Una carátula caída no deja el hueco vacío: el
+                            // marcador de reproducción ocupa su sitio.
+                            errorBuilder: (_, _, _) =>
+                                const _PosterPlaceholder(),
+                          ),
                   ),
                 ),
                 Positioned(

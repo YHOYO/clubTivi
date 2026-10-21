@@ -134,6 +134,26 @@ void main() {
     expect(find.text('S1 · E2 · 33m left'), findsOneWidget);
   });
 
+  testWidgets('la tarjeta pinta la carátula guardada con el progreso', (
+    tester,
+  ) async {
+    await dao.saveProgress(
+      _episode,
+      position: const Duration(minutes: 12),
+      duration: const Duration(minutes: 45),
+      mediaTitle: 'Carrie',
+      mediaPoster: 'https://img.test/carrie.jpg',
+    );
+
+    await pumpRail(tester);
+
+    final image = tester.widget<Image>(find.byType(Image));
+    expect(
+      (image.image as NetworkImage).url,
+      'https://img.test/carrie.jpg',
+    );
+  });
+
   testWidgets('olvidar el título limpia la fila y el release recordado', (
     tester,
   ) async {

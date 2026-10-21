@@ -24,6 +24,7 @@ class PlaybackProgressRecorder {
     required Stream<Duration> durations,
     required Stream<bool> playing,
     String? mediaTitle,
+    String? mediaPoster,
     this.interval = const Duration(seconds: 10),
     DateTime Function()? now,
   })  : _dao = dao,
@@ -32,6 +33,7 @@ class PlaybackProgressRecorder {
         _durations = durations,
         _playing = playing,
         _mediaTitle = mediaTitle,
+        _mediaPoster = mediaPoster,
         _now = now ?? DateTime.now;
 
   final PlaybackDao _dao;
@@ -40,6 +42,7 @@ class PlaybackProgressRecorder {
   final Stream<Duration> _durations;
   final Stream<bool> _playing;
   final String? _mediaTitle;
+  final String? _mediaPoster;
   final DateTime Function() _now;
 
   /// Cadencia máxima de escritura.
@@ -116,6 +119,7 @@ class PlaybackProgressRecorder {
       duration: _duration,
       completed: completed,
       mediaTitle: _mediaTitle,
+      mediaPoster: _mediaPoster,
       at: _now(),
     );
   }
