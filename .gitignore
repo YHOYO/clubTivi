@@ -53,3 +53,9 @@ flutter_02.png
 **/key.properties
 **/keystore-credentials.txt
 /dist/
+
+# Notas locales con claves reales (AllDebrid y compañía): nunca se publican.
+/docs/alldebrid api.md
+.env
+.env.*
+!.env.example
