@@ -17,6 +17,7 @@ import '../../data/services/app_update_service.dart';
 import '../../data/services/backup_service.dart';
 import '../../data/services/debrid_settings.dart';
 import '../../data/services/release_checksum.dart';
+import '../../data/services/secrets_ready.dart';
 import '../../data/services/stremio_addon_settings.dart';
 import '../../data/services/epg_refresh_service.dart';
 import '../providers/provider_manager.dart';
@@ -1167,6 +1168,9 @@ class _ShowsApiKeysSectionState extends ConsumerState<_ShowsApiKeysSection> {
   }
 
   Future<void> _saveTrakt() async {
+    // El campo que no se está guardando sale del estado: si la migración no
+    // terminó, leerlo vacío borraría la otra credencial.
+    await ref.read(secretsReadyProvider);
     final keys = ref.read(showsApiKeysProvider);
     await ref.read(showsApiKeysProvider.notifier).save(
       traktClientId: _traktCtrl.text.trim(),
@@ -1182,6 +1186,7 @@ class _ShowsApiKeysSectionState extends ConsumerState<_ShowsApiKeysSection> {
   }
 
   Future<void> _saveTmdb() async {
+    await ref.read(secretsReadyProvider);
     final keys = ref.read(showsApiKeysProvider);
     await ref.read(showsApiKeysProvider.notifier).save(
       traktClientId: keys.traktClientId,

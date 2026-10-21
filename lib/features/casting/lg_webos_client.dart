@@ -26,8 +26,17 @@ class LgWebOsClient {
 
   final SecretStore _secrets;
 
-  LgWebOsClient({required this.host, this.port = 3000, SecretStore? secrets})
-      : _secrets = secrets ?? SecureSecretStore();
+  /// La migración de credenciales de arranque, si la hay: la clave de esta TV
+  /// se lee después, nunca durante el barrido.
+  final Future<void>? _secretsReady;
+
+  LgWebOsClient({
+    required this.host,
+    this.port = 3000,
+    SecretStore? secrets,
+    Future<void>? secretsReady,
+  })  : _secrets = secrets ?? SecureSecretStore(),
+        _secretsReady = secretsReady;
 
   bool get isConnected => _ws != null && _paired;
 
@@ -36,6 +45,8 @@ class LgWebOsClient {
   /// The TV will show a pairing prompt on first connection.
   Future<bool> connect({Duration timeout = const Duration(seconds: 15)}) async {
     try {
+      final ready = _secretsReady;
+      if (ready != null) await ready;
       // Load saved client key for this TV, migrating the legacy preference.
       final prefs = await SharedPreferences.getInstance();
       final saved = await migratePrefSecret(

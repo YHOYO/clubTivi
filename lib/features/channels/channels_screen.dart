@@ -22,6 +22,7 @@ import '../../data/models/epg.dart' as epg_models;
 import '../../data/services/app_update_service.dart';
 import '../../data/services/channel_history_service.dart';
 import '../../data/services/epg_refresh_service.dart';
+import '../../data/services/secrets_ready.dart';
 import '../../data/services/stream_alternatives_service.dart';
 import '../player/buffer_status_indicator.dart';
 import '../player/player_service.dart';
@@ -1679,6 +1680,8 @@ class _ChannelsScreenState extends ConsumerState<ChannelsScreen> {
     if (_imdbIdCache.containsKey(key)) return;
     _imdbIdCache[key] = null; // mark in-progress
     try {
+      // La clave de TMDB puede seguir migrando: se espera antes de leerla.
+      await ref.read(secretsReadyProvider);
       final keys = ref.read(showsApiKeysProvider);
       if (!keys.hasTmdbKey) return;
       final tmdb = TmdbClient(apiKey: keys.tmdbApiKey);

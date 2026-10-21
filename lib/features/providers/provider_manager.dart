@@ -13,6 +13,7 @@ import '../../data/models/channel.dart' hide Provider;
 import '../../data/services/epg_refresh_service.dart';
 import '../../data/services/secret_store.dart';
 import '../../data/services/secret_store_provider.dart';
+import '../../data/services/secrets_ready.dart';
 import '../../data/services/logo_resolver_service.dart';
 import '../../core/feature_gate.dart';
 import 'package:dio/dio.dart';
@@ -23,8 +24,14 @@ class ProviderManager {
   final SecretStore _secrets;
   final M3uParser _m3uParser = M3uParser();
 
-  ProviderManager(this._db, {SecretStore? secrets})
-      : _secrets = secrets ?? SecureSecretStore();
+  ProviderManager(this._db, {SecretStore? secrets, Future<void>? ready})
+      : _secrets = secrets ?? SecureSecretStore(),
+        _ready = ready;
+
+  /// Se completa cuando la migración de arranque termina. Null para el
+  /// migrador (no puede esperarse a sí mismo) y para los tests que no la
+  /// lanzan.
+  final Future<void>? _ready;
 
   /// Check provider count against tier limit.
   Future<void> _checkProviderLimit() async {
@@ -243,7 +250,7 @@ class ProviderManager {
     final client = XtreamClient(
       baseUrl: provider.url!,
       username: provider.username!,
-      password: await _providerPassword(provider),
+      password: await passwordFor(provider.id),
     );
     try {
       return await client.getLiveStreams(providerId: provider.id);
@@ -252,12 +259,19 @@ class ProviderManager {
     }
   }
 
-  /// Contraseña Xtream de la base (formato legado) o del almacén seguro.
+  /// Contraseña Xtream efectiva del proveedor, migrándola al almacén si aún
+  /// estaba en la base.
   ///
-  /// Si viene de la base se mueve al almacén y la fila se limpia; si el
-  /// almacén no está disponible se usa la de la base y **no se borra**, para
-  /// no dejar al proveedor sin poder refrescar.
-  Future<String> _providerPassword(db.Provider provider) async {
+  /// Espera a la migración de arranque antes de leer: sin esa espera podría
+  /// consultar la columna justo cuando el barrido la vacía y quedarse sin
+  /// contraseña. Si viene de la base se mueve al almacén y la fila se limpia;
+  /// si el almacén no está disponible se usa la de la base y **no se borra**,
+  /// para no dejar al proveedor sin poder refrescar.
+  Future<String> passwordFor(String providerId) async {
+    final ready = _ready;
+    if (ready != null) await ready;
+    final providers = await _db.getAllProviders();
+    final provider = providers.firstWhere((p) => p.id == providerId);
     final legacy = provider.password;
     if (legacy != null && legacy.isNotEmpty) {
       if (await _storePassword(provider.id, legacy)) {
@@ -513,5 +527,8 @@ final providerManagerProvider = Provider<ProviderManager>((ref) {
   return ProviderManager(
     ref.watch(databaseProvider),
     secrets: ref.watch(secretStoreProvider),
+    // La contraseña Xtream espera a que la migración haya movido las que
+    // quedaron en la base.
+    ready: ref.watch(secretsReadyProvider),
   );
 });

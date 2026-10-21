@@ -4,6 +4,7 @@ import 'package:dlna_dart/dlna.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:logger/logger.dart';
 
+import '../../data/services/secrets_ready.dart';
 import 'lg_webos_client.dart';
 
 final _log = Logger(printer: SimplePrinter());
@@ -30,6 +31,12 @@ class CastDevice {
 
 /// Manages device discovery and casting of IPTV streams via DLNA/UPnP.
 class CastService {
+  /// La migración de credenciales de arranque, para que emparejar una TV no
+  /// lea su clave mientras el barrido la mueve.
+  final Future<void>? _secretsReady;
+
+  CastService({Future<void>? secretsReady}) : _secretsReady = secretsReady;
+
   DLNAManager? _dlnaManager;
   DeviceManager? _deviceManager;
   StreamSubscription? _deviceSub;
@@ -191,7 +198,7 @@ class CastService {
     // Try LG WebOS first
     final isWebOs = await LgWebOsClient.probe(ip);
     if (isWebOs) {
-      final client = LgWebOsClient(host: ip);
+      final client = LgWebOsClient(host: ip, secretsReady: _secretsReady);
       final connected = await client.connect();
       String name = 'LG TV ($ip)';
       if (connected) {
@@ -223,7 +230,7 @@ class CastService {
 
 /// Riverpod provider for the cast service (singleton).
 final castServiceProvider = Provider<CastService>((ref) {
-  final service = CastService();
+  final service = CastService(secretsReady: ref.watch(secretsReadyProvider));
   ref.onDispose(() => service.dispose());
   return service;
 });

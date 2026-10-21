@@ -14,6 +14,7 @@ import '../../data/services/api_key_store.dart';
 import '../../data/services/debrid_settings.dart';
 import '../../data/services/language_preferences_store.dart';
 import '../../data/services/secret_store_provider.dart';
+import '../../data/services/secrets_ready.dart';
 import '../../data/services/stremio_addon_settings.dart';
 import '../../data/services/stream_ranker.dart';
 import '../../data/services/tmdb_language_store.dart';
@@ -48,6 +49,10 @@ final enabledStreamAddonsProvider = Provider<List<InstalledAddon>>(
 /// [stremioAddonSettingsProvider]; sin nada habilitado, el repositorio sigue
 /// funcionando exactamente como antes.
 final showsRepositoryProvider = FutureProvider<ShowsRepository>((ref) async {
+  // La migración corre en segundo plano desde `main`: el repositorio espera a
+  // que termine para construir Trakt, TMDB y debrid con los valores ya
+  // migrados, en vez de arrancar con las claves vacías.
+  await ref.watch(secretsReadyProvider);
   final keys = ref.watch(showsApiKeysProvider);
   final debridSettings = ref.watch(debridSettingsProvider);
   final addons = ref.watch(enabledStreamAddonsProvider);
@@ -476,6 +481,9 @@ class ShowsApiKeysNotifier extends StateNotifier<ShowsApiKeys> {
     required String traktClientId,
     required String tmdbApiKey,
   }) async {
+    // La migración manda: escribir antes de leer el almacén podría sustituir
+    // una credencial legada por vacío.
+    await load();
     await _store.save(
       traktClientId: traktClientId,
       tmdbApiKey: tmdbApiKey,
